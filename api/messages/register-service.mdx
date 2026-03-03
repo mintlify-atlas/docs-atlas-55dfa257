@@ -1,0 +1,86 @@
+---
+title: RegisterService
+description: Register a service with the iii framework
+---
+
+## Request
+
+Register a service to identify and group related functions and triggers under a named service.
+
+<ParamField name="type" type="string" required>
+  Message type. Must be `"registerservice"`.
+</ParamField>
+
+<ParamField name="id" type="string" required>
+  Unique identifier for the service.
+</ParamField>
+
+<ParamField name="name" type="string" required>
+  Human-readable name of the service.
+</ParamField>
+
+<ParamField name="description" type="string">
+  Optional description of the service and its purpose.
+</ParamField>
+
+## Response
+
+This message typically does not have a dedicated response. The service registration is acknowledged by the framework and the service becomes available for function and trigger registration.
+
+## Examples
+
+### Basic Service Registration
+
+```json
+{
+  "type": "registerservice",
+  "id": "payment_service",
+  "name": "Payment Service"
+}
+```
+
+### Service with Description
+
+```json
+{
+  "type": "registerservice",
+  "id": "notification_service",
+  "name": "Notification Service",
+  "description": "Handles all user notifications including email, SMS, and push notifications"
+}
+```
+
+### Microservice Registration
+
+```json
+{
+  "type": "registerservice",
+  "id": "analytics.events",
+  "name": "Analytics Events Service",
+  "description": "Processes and aggregates user analytics events"
+}
+```
+
+## Error Cases
+
+### Duplicate Service ID
+
+Attempting to register a service with an ID that's already registered will fail. Unregister the existing service first or use a different ID.
+
+### Invalid Service ID Format
+
+Service IDs should follow naming conventions (typically alphanumeric with dots or underscores).
+
+## Notes
+
+- Service IDs must be unique within a worker session
+- Services provide logical grouping and organization for functions and triggers
+- The `description` field is optional and omitted from serialization when not provided
+- Registering a service does not automatically register any functions or triggers
+- Functions and triggers can reference the service ID in their metadata
+- Services help organize and manage related functionality in distributed systems
+
+## Related Messages
+
+- [RegisterFunction](/api/messages/register-function) - Register a function within a service
+- [RegisterTrigger](/api/messages/register-trigger) - Register a trigger for a function

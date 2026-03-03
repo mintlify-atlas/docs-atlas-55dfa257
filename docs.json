@@ -46,10 +46,13 @@
               "modules/overview",
               "modules/http",
               "modules/queue",
+              "modules/pubsub",
               "modules/cron",
               "modules/stream",
               "modules/state",
               "modules/observability",
+              "modules/shell",
+              "modules/http-functions",
               "modules/custom-modules"
             ]
           },
@@ -73,6 +76,7 @@
             "group": "Advanced",
             "pages": [
               "advanced/protocol",
+              "advanced/built-in-functions",
               "advanced/custom-adapters",
               "advanced/monitoring",
               "advanced/security"
@@ -96,7 +100,10 @@
               "api/messages/register-function",
               "api/messages/invoke-function",
               "api/messages/register-trigger",
-              "api/messages/unregister-trigger"
+              "api/messages/unregister-trigger",
+              "api/messages/register-service",
+              "api/messages/ping-pong",
+              "api/messages/worker-registered"
             ]
           },
           {
@@ -104,7 +111,10 @@
             "pages": [
               "api/traits/module",
               "api/traits/queue-adapter",
-              "api/traits/stream-adapter"
+              "api/traits/stream-adapter",
+              "api/traits/state-adapter",
+              "api/traits/pubsub-adapter",
+              "api/traits/cron-adapter"
             ]
           }
         ]

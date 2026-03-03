@@ -1,0 +1,243 @@
+---
+title: "PubSub Module"
+description: "Real-time publish/subscribe messaging"
+---
+
+The PubSub module provides real-time publish/subscribe messaging for event-driven architectures. Functions can subscribe to topics and react instantly to published events.
+
+## Configuration
+
+Configure the PubSub module in `config.yaml`:
+
+```yaml config.yaml
+modules:
+  - class: modules::pubsub::PubSubModule
+    config:
+      adapter:
+        class: modules::pubsub::RedisAdapter
+        config:
+          redis_url: redis://localhost:6379
+```
+
+## Available Adapters
+
+<Tabs>
+  <Tab title="LocalAdapter (Default)">
+    In-memory pub/sub for development and single-instance deployments:
+    
+    ```yaml
+    adapter:
+      class: modules::pubsub::LocalAdapter
+    ```
+    
+    <Note>
+      LocalAdapter stores subscriptions in memory. Events are only delivered to subscribers in the same process instance.
+    </Note>
+  </Tab>
+  
+  <Tab title="RedisAdapter (Production)">
+    Distributed pub/sub using Redis for multi-instance deployments:
+    
+    ```yaml
+    adapter:
+      class: modules::pubsub::RedisAdapter
+      config:
+        redis_url: redis://localhost:6379
+    ```
+    
+    <ParamField path="redis_url" type="string" default="redis://localhost:6379">
+      Redis connection URL for distributed pub/sub messaging
+    </ParamField>
+  </Tab>
+</Tabs>
+
+## Publishing Events
+
+Use the `pubsub.publish` function to publish events to a topic:
+
+```typescript
+await client.call('pubsub.publish', {
+  topic: 'user.login',
+  data: {
+    userId: 123,
+    timestamp: new Date().toISOString(),
+  },
+});
+```
+
+<ParamField path="topic" type="string" required>
+  The topic name to publish the event to. Cannot be empty.
+</ParamField>
+
+<ParamField path="data" type="any" required>
+  The event data payload. Can be any JSON-serializable value.
+</ParamField>
+
+## Subscribing to Topics
+
+Define subscribe triggers to listen for events on specific topics:
+
+```typescript index.ts
+export default iii({
+  triggers: {
+    'on-user-login': {
+      type: 'subscribe',
+      config: {
+        topic: 'user.login',
+      },
+    },
+    'on-order-created': {
+      type: 'subscribe',
+      config: {
+        topic: 'order.created',
+      },
+    },
+  },
+});
+
+export async function onUserLogin(data: any) {
+  console.log('User logged in:', data.userId);
+  // Track login analytics
+  await trackEvent('login', data);
+}
+
+export async function onOrderCreated(data: any) {
+  console.log('New order:', data.orderId);
+  // Send confirmation email
+  await sendConfirmation(data);
+}
+```
+
+## Trigger Configuration
+
+<ParamField path="type" type="string" required>
+  Must be `subscribe` to register a PubSub subscription
+</ParamField>
+
+<ParamField path="config.topic" type="string" required>
+  The topic name to subscribe to
+</ParamField>
+
+## Use Cases
+
+### Real-time Notifications
+
+```typescript
+// Publisher
+await client.call('pubsub.publish', {
+  topic: 'notifications',
+  data: {
+    userId: 456,
+    message: 'Your order has shipped!',
+  },
+});
+
+// Subscriber
+export async function onNotification(data: any) {
+  await sendPushNotification(data.userId, data.message);
+}
+```
+
+### Event Broadcasting
+
+```typescript
+// Broadcast to multiple subscribers
+await client.call('pubsub.publish', {
+  topic: 'cache.invalidate',
+  data: { key: 'products' },
+});
+
+// Multiple functions can subscribe to the same topic
+export async function onCacheInvalidate(data: any) {
+  await clearCache(data.key);
+}
+```
+
+### Cross-Service Communication
+
+```typescript
+// Service A publishes events
+await client.call('pubsub.publish', {
+  topic: 'payment.processed',
+  data: {
+    orderId: '123',
+    amount: 99.99,
+  },
+});
+
+// Service B reacts to events
+export async function onPaymentProcessed(data: any) {
+  await fulfillOrder(data.orderId);
+}
+```
+
+## LocalAdapter vs RedisAdapter
+
+### LocalAdapter
+
+- **Use for**: Development, single-instance deployments
+- **Storage**: In-memory HashMap
+- **Scope**: Single process instance only
+- **Performance**: Extremely fast (no network overhead)
+- **Persistence**: None (events lost on restart)
+
+### RedisAdapter
+
+- **Use for**: Production, multi-instance deployments
+- **Storage**: Redis pub/sub channels
+- **Scope**: All connected instances
+- **Performance**: Fast with minimal network latency
+- **Persistence**: None (Redis pub/sub is ephemeral)
+
+<Warning>
+  PubSub is for real-time event notifications, not guaranteed message delivery. For durable message processing with at-least-once delivery guarantees, use the [Queue module](/modules/queue).
+</Warning>
+
+## Error Handling
+
+The publish function returns errors for invalid input:
+
+```typescript
+// Empty topic returns an error
+const result = await client.call('pubsub.publish', {
+  topic: '',
+  data: { test: true },
+});
+// Returns: { code: 'topic_not_set', message: 'Topic is not set' }
+```
+
+## Best Practices
+
+1. **Use descriptive topic names** - Use namespaced topics like `user.created`, `order.shipped`
+2. **Keep payloads small** - PubSub is optimized for real-time events, not large data transfers
+3. **Handle failures gracefully** - Subscribers should not throw errors that affect other subscribers
+4. **Use Redis in production** - RedisAdapter enables horizontal scaling across multiple instances
+5. **Don't rely on delivery guarantees** - Use the Queue module if you need guaranteed delivery
+
+## Comparison with Queue Module
+
+| Feature | PubSub | Queue |
+|---------|--------|-------|
+| **Delivery** | Fire-and-forget | At-least-once |
+| **Pattern** | Broadcast to all subscribers | Single consumer processes each message |
+| **Use case** | Real-time notifications, events | Background jobs, task processing |
+| **Persistence** | No | Yes |
+| **Message ordering** | No guarantees | Ordered within topic |
+
+## API Reference
+
+### pubsub.publish
+
+<ParamField path="input" type="PubSubInput" required>
+  ```typescript
+  {
+    topic: string;  // Topic name (required, non-empty)
+    data: any;      // Event payload (required)
+  }
+  ```
+</ParamField>
+
+**Returns**: `null` on success, `ErrorBody` on failure
+
+**Errors**:
+- `topic_not_set` - Topic is empty or not provided

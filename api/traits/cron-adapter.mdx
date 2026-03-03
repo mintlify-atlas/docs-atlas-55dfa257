@@ -1,0 +1,259 @@
+---
+title: CronAdapter
+description: Trait for implementing distributed cron job locking
+---
+
+The `CronSchedulerAdapter` trait defines the interface for distributed locking in III's cron system. Cron adapters ensure that scheduled jobs run exactly once across multiple engine instances.
+
+## Trait Definition
+
+```rust
+#[async_trait]
+pub trait CronSchedulerAdapter: Send + Sync + 'static {
+    async fn try_acquire_lock(&self, job_id: &str) -> bool;
+    async fn release_lock(&self, job_id: &str);
+}
+```
+
+Source: `/workspace/source/src/modules/cron/structs.rs:26`
+
+## Methods
+
+### `try_acquire_lock`
+
+```rust
+async fn try_acquire_lock(&self, job_id: &str) -> bool
+```
+
+Attempts to acquire a distributed lock for a cron job execution.
+
+**Parameters:**
+- `job_id` - Unique identifier for the cron job
+
+**Returns:**
+- `true` if the lock was successfully acquired
+- `false` if another instance already holds the lock
+
+**Behavior:**
+- Must be atomic to prevent race conditions
+- Lock should have a TTL to prevent deadlocks if an instance crashes
+- Only one instance across the cluster should acquire the lock
+- Typical TTL: 30 seconds
+
+### `release_lock`
+
+```rust
+async fn release_lock(&self, job_id: &str)
+```
+
+Releases the distributed lock for a cron job.
+
+**Parameters:**
+- `job_id` - Unique identifier for the cron job
+
+**Behavior:**
+- Should only release locks owned by the current instance
+- Must be atomic to prevent releasing another instance's lock
+- Safe to call even if lock is not held
+- Called automatically after job execution completes
+
+## Available Adapters
+
+### RedisCronAdapter
+
+Redis-based distributed locking using atomic SET operations with TTL.
+
+```javascript
+modules: {
+  cron: {
+    adapter: "modules::cron::RedisCronAdapter",
+    config: {
+      redis_url: "redis://localhost:6379"
+    }
+  }
+}
+```
+
+**Features:**
+- True distributed locking across multiple instances
+- Atomic lock acquisition using Redis SET NX PX
+- Automatic lock expiration after 30 seconds
+- Lua script for atomic lock release
+- Prevents duplicate job executions in clustered environments
+
+**Lock Mechanism:**
+```rust
+// Lock key format: "cron_lock:{job_id}"
+// Lock value: unique instance ID
+// TTL: 30,000ms (30 seconds)
+```
+
+Source: `/workspace/source/src/modules/cron/adapters/redis_adapter.rs`
+
+### KvCronAdapter
+
+Process-local key-value based locking for single-instance deployments.
+
+```javascript
+modules: {
+  cron: {
+    adapter: "modules::cron::KvCronAdapter",
+    config: {
+      lock_ttl_ms: 30000,
+      lock_index: "cron_locks"
+    }
+  }
+}
+```
+
+**Features:**
+- In-memory locking using built-in KV store
+- Zero external dependencies
+- Shared lock store across adapter instances in the same process
+- Suitable for development and single-instance deployments
+
+**Warning:**
+This adapter uses process-local locks. In multi-instance deployments, cron jobs may run on every engine instance. Use `RedisCronAdapter` for distributed setups.
+
+**Configuration:**
+- `lock_ttl_ms` - Lock time-to-live in milliseconds (default: 30000)
+- `lock_index` - KV store index for locks (default: "cron_locks")
+
+Source: `/workspace/source/src/modules/cron/adapters/kv_adapter.rs`
+
+## How Cron Locking Works
+
+1. **Scheduled Time Arrives**: Each engine instance calculates the next execution time independently
+2. **Lock Attempt**: When the time arrives, all instances try to acquire the lock
+3. **Single Execution**: Only one instance succeeds in acquiring the lock
+4. **Job Execution**: The lock holder executes the cron job function
+5. **Lock Release**: After completion (success or failure), the lock is released
+6. **Lock Expiration**: If the instance crashes, the lock auto-expires after TTL
+
+```
+Instance A: ─────[TRY LOCK]──[ACQUIRED]──[EXECUTE]──[RELEASE]─────
+Instance B: ─────[TRY LOCK]──[FAILED]────────────────────────────
+Instance C: ─────[TRY LOCK]──[FAILED]────────────────────────────
+```
+
+## Example Implementation
+
+```rust
+use async_trait::async_trait;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+struct CustomCronAdapter {
+    locks: Arc<Mutex<HashMap<String, String>>>,
+    instance_id: String,
+}
+
+impl CustomCronAdapter {
+    pub fn new() -> Self {
+        Self {
+            locks: Arc::new(Mutex::new(HashMap::new())),
+            instance_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+}
+
+#[async_trait]
+impl CronSchedulerAdapter for CustomCronAdapter {
+    async fn try_acquire_lock(&self, job_id: &str) -> bool {
+        let mut locks = self.locks.lock().await;
+        
+        // Check if lock exists and is not expired
+        if locks.contains_key(job_id) {
+            return false;
+        }
+        
+        // Acquire lock
+        locks.insert(job_id.to_string(), self.instance_id.clone());
+        tracing::debug!(
+            job_id = %job_id,
+            instance_id = %self.instance_id,
+            "Acquired cron lock"
+        );
+        
+        true
+    }
+
+    async fn release_lock(&self, job_id: &str) {
+        let mut locks = self.locks.lock().await;
+        
+        // Only release if we own the lock
+        if let Some(owner) = locks.get(job_id) {
+            if owner == &self.instance_id {
+                locks.remove(job_id);
+                tracing::debug!(job_id = %job_id, "Released cron lock");
+            }
+        }
+    }
+}
+```
+
+## Redis Implementation Details
+
+The `RedisCronAdapter` uses Redis atomic operations to ensure distributed locking:
+
+### Lock Acquisition
+
+```rust
+// Atomic SET with NX (only if not exists) and PX (TTL in milliseconds)
+redis::cmd("SET")
+    .arg("cron_lock:{job_id}")
+    .arg(instance_id)
+    .arg("NX")  // Only set if key doesn't exist
+    .arg("PX")  // Set TTL in milliseconds
+    .arg(30000) // 30 seconds
+    .query_async(&mut conn)
+    .await
+```
+
+### Lock Release
+
+```lua
+-- Lua script for atomic lock release (only if owned by this instance)
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+```
+
+## Best Practices
+
+### Lock TTL
+
+- Set TTL longer than the maximum expected job execution time
+- Default 30 seconds works for most jobs
+- Consider job-specific TTLs for long-running tasks
+- TTL prevents deadlocks if an instance crashes
+
+### Error Handling
+
+```rust
+async fn try_acquire_lock(&self, job_id: &str) -> bool {
+    match self.acquire_lock_internal(job_id).await {
+        Ok(acquired) => acquired,
+        Err(e) => {
+            tracing::error!(job_id = %job_id, error = %e, "Lock acquisition failed");
+            false // Fail safe: don't execute if uncertain
+        }
+    }
+}
+```
+
+### Instance Identification
+
+- Use UUIDs for instance IDs to ensure uniqueness
+- Store instance ID when acquiring locks
+- Verify ownership before releasing locks
+- Prevents accidentally releasing another instance's lock
+
+## Related
+
+- [Cron Module](/modules/cron)
+- [Triggers](/concepts/triggers)
+- [Custom Adapters](/advanced/custom-adapters)

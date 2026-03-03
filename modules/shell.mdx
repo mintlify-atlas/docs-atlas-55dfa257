@@ -1,0 +1,362 @@
+---
+title: "Shell Module (ExecModule)"
+description: "File watching and command execution"
+---
+
+The Shell module (ExecModule) enables automatic command execution with file watching capabilities. Perfect for development workflows, build automation, and process management.
+
+## Configuration
+
+Configure the ExecModule in `config.yaml`:
+
+```yaml config.yaml
+modules:
+  - class: modules::shell::ExecModule
+    config:
+      watch:
+        - "src/**/*.ts"
+        - "steps/**/*.{ts,js}"
+      exec:
+        - "npm run build"
+        - "npm start"
+```
+
+<Note>
+  The ExecModule is **disabled by default**. You must explicitly enable it in your configuration.
+</Note>
+
+## Configuration Options
+
+<ParamField path="watch" type="array<string>" required={false}>
+  Glob patterns for files to watch. Supports standard glob syntax:
+  - `**` for recursive directory matching
+  - `*` for wildcard matching
+  - `{ts,js}` for multiple extensions
+  
+  When files matching these patterns change, the exec pipeline restarts.
+</ParamField>
+
+<ParamField path="exec" type="array<string>" required>
+  Shell commands to execute in order. Each command runs in a new shell process.
+  
+  Commands execute sequentially. If a command fails, the pipeline stops.
+</ParamField>
+
+## File Watching
+
+The module watches files matching your glob patterns and automatically restarts the command pipeline when changes are detected.
+
+### Watched Events
+
+The module responds to these file system events:
+- File creation
+- File modification (content changes)
+- File rename
+- File deletion
+
+### Example Patterns
+
+<CodeGroup>
+```yaml TypeScript Source Files
+watch:
+  - "src/**/*.ts"  # All .ts files in src/ recursively
+```
+
+```yaml Multiple Extensions
+watch:
+  - "steps/**/*.{ts,js}"  # .ts and .js files in steps/
+```
+
+```yaml Non-Recursive
+watch:
+  - "config/*.json"  # .json files in config/ only (not subdirs)
+```
+
+```yaml Multiple Directories
+watch:
+  - "src/**/*.ts"
+  - "lib/**/*.js"
+  - "tests/**/*.test.ts"
+```
+</CodeGroup>
+
+## Command Execution
+
+Commands execute in a **sequential pipeline**. Each command must complete successfully before the next one starts.
+
+### Pipeline Behavior
+
+```yaml config.yaml
+modules:
+  - class: modules::shell::ExecModule
+    config:
+      exec:
+        - "npm run build"  # Step 1: Build the project
+        - "npm start"      # Step 2: Start the server (long-running)
+```
+
+**Pipeline execution:**
+1. Runs `npm run build`
+2. Waits for build to complete
+3. If build succeeds, runs `npm start`
+4. If build fails, pipeline stops
+
+### Long-Running Processes
+
+The last command in the pipeline typically runs indefinitely (like a dev server):
+
+```yaml
+exec:
+  - "npm run build"
+  - "npm run dev"  # Runs continuously until file change
+```
+
+When a watched file changes:
+1. The running process is **terminated gracefully** (SIGTERM)
+2. If it doesn't exit within 3 seconds, it's **force-killed** (SIGKILL)
+3. The entire pipeline **restarts from the beginning**
+
+## Platform Support
+
+### Linux/macOS
+
+Commands execute via `sh -c`:
+
+```yaml
+exec:
+  - "npm run build && npm start"
+  - "echo 'Starting...' && node server.js"
+```
+
+### Windows
+
+Commands execute via `cmd /C`:
+
+```yaml
+exec:
+  - "npm run build && npm start"
+  - "echo Starting... && node server.js"
+```
+
+## Process Management
+
+### Process Groups
+
+The module creates process groups to ensure all child processes are properly terminated:
+
+- **Linux/macOS**: Uses `setsid()` to create new session IDs
+- **Windows**: Uses `CREATE_NEW_PROCESS_GROUP` flag
+
+This ensures that spawned subprocesses (like `npm start` spawning `node`) are cleaned up when the parent is terminated.
+
+### Graceful Shutdown
+
+On file changes or module shutdown:
+
+1. **SIGTERM** sent to process group (polite request)
+2. **3-second grace period** for cleanup
+3. **SIGKILL** if process doesn't exit (force kill)
+4. **Reap zombie processes** to prevent resource leaks
+
+<Warning>
+  All processes in the execution pipeline are terminated when files change. Ensure your commands handle SIGTERM gracefully to avoid data loss.
+</Warning>
+
+## Use Cases
+
+### Development Server with Auto-Rebuild
+
+```yaml config.yaml
+modules:
+  - class: modules::shell::ExecModule
+    config:
+      watch:
+        - "src/**/*.ts"
+        - "steps/**/*.ts"
+      exec:
+        - "npm run build"
+        - "npm run dev"
+```
+
+When you edit TypeScript files, the dev server automatically rebuilds and restarts.
+
+### Test Runner
+
+```yaml config.yaml
+modules:
+  - class: modules::shell::ExecModule
+    config:
+      watch:
+        - "src/**/*.ts"
+        - "tests/**/*.test.ts"
+      exec:
+        - "npm test"
+```
+
+Runs tests automatically whenever source or test files change.
+
+### Multi-Step Build Pipeline
+
+```yaml config.yaml
+modules:
+  - class: modules::shell::ExecModule
+    config:
+      watch:
+        - "src/**/*.{ts,tsx}"
+      exec:
+        - "npm run lint"
+        - "npm run typecheck"
+        - "npm run build"
+        - "npm start"
+```
+
+Each step must pass before the next one runs.
+
+### Config File Watcher
+
+```yaml config.yaml
+modules:
+  - class: modules::shell::ExecModule
+    config:
+      watch:
+        - "config/*.json"
+      exec:
+        - "npm run restart"
+```
+
+Restart the application when configuration files change.
+
+## Advanced Configuration
+
+### Watching Without Execution
+
+If you don't provide `watch`, commands run once at startup with no file watching:
+
+```yaml
+modules:
+  - class: modules::shell::ExecModule
+    config:
+      exec:
+        - "npm run setup"
+        - "npm start"
+```
+
+### Complex Glob Patterns
+
+```yaml
+watch:
+  # Watch TypeScript in src/ but not test files
+  - "src/**/*.ts"
+  
+  # Watch specific config files
+  - "config/*.{json,yaml}"
+  
+  # Watch multiple directories
+  - "lib/**/*.js"
+  - "plugins/**/*.js"
+```
+
+## Troubleshooting
+
+### Process Not Terminating
+
+If your process doesn't handle SIGTERM, it will be force-killed after 3 seconds. To handle graceful shutdown:
+
+```javascript
+process.on('SIGTERM', async () => {
+  console.log('Shutting down gracefully...');
+  await cleanup();
+  process.exit(0);
+});
+```
+
+### Too Many Restarts
+
+If your build process generates files that trigger watches:
+
+```yaml
+# ❌ Bad: Watches build output
+watch:
+  - "dist/**/*.js"  # Don't watch generated files!
+
+# ✅ Good: Only watches source files
+watch:
+  - "src/**/*.ts"
+```
+
+### Pipeline Stops After First Command
+
+Commands run sequentially. If the first command fails, the pipeline stops:
+
+```yaml
+exec:
+  - "npm run build"  # If this fails, npm start never runs
+  - "npm start"
+```
+
+Check your command exit codes. Non-zero exit codes stop the pipeline.
+
+## Performance Considerations
+
+### Watch Pattern Optimization
+
+```yaml
+# ❌ Inefficient: Watches everything recursively
+watch:
+  - "**/*.*"
+
+# ✅ Efficient: Specific patterns
+watch:
+  - "src/**/*.ts"
+  - "steps/**/*.ts"
+```
+
+### Debouncing
+
+The module processes up to **100 file events** in the internal channel. Rapid changes are naturally debounced by the restart process.
+
+## Limitations
+
+1. **No interactive commands** - Commands requiring user input are not supported
+2. **Sequential execution** - Commands cannot run in parallel
+3. **No retry logic** - Failed commands stop the pipeline
+4. **No output capture** - Command output goes directly to stdout/stderr
+
+## Comparison with Other Tools
+
+| Feature | ExecModule | nodemon | chokidar-cli |
+|---------|-----------|---------|-------------|
+| **Built-in** | Yes | No | No |
+| **Config** | YAML | CLI/JSON | CLI |
+| **Pipeline** | Sequential | Single command | Single command |
+| **Process groups** | Yes | Partial | No |
+| **Platform** | Cross-platform | Cross-platform | Cross-platform |
+
+## Best Practices
+
+1. **Watch source files only** - Don't watch generated output
+2. **Use specific patterns** - Avoid watching unnecessary files
+3. **Handle SIGTERM** - Implement graceful shutdown in your processes
+4. **Keep pipelines short** - Long pipelines slow down iteration
+5. **Use for development** - This module is designed for dev workflows, not production
+
+## API Reference
+
+### ExecConfig
+
+```typescript
+interface ExecConfig {
+  watch?: string[];  // Optional glob patterns for file watching
+  exec: string[];    // Required shell commands to execute
+}
+```
+
+### Module Registration
+
+```rust
+crate::register_module!(
+    "modules::shell::ExecModule",
+    ExecCoreModule,
+    enabled_by_default = false  // Must be explicitly enabled
+);
+```

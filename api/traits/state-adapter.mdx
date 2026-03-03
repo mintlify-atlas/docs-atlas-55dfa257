@@ -1,0 +1,267 @@
+---
+title: StateAdapter
+description: Trait for implementing custom state persistence backends
+---
+
+The `StateAdapter` trait defines the interface for state persistence in III. State adapters allow you to store, retrieve, and manipulate key-value data across different storage backends.
+
+## Trait Definition
+
+```rust
+#[async_trait]
+pub trait StateAdapter: Send + Sync {
+    async fn set(&self, scope: &str, key: &str, value: Value) -> anyhow::Result<SetResult>;
+    async fn get(&self, scope: &str, key: &str) -> anyhow::Result<Option<Value>>;
+    async fn delete(&self, scope: &str, key: &str) -> anyhow::Result<()>;
+    async fn update(
+        &self,
+        scope: &str,
+        key: &str,
+        ops: Vec<UpdateOp>,
+    ) -> anyhow::Result<UpdateResult>;
+    async fn list(&self, scope: &str) -> anyhow::Result<Vec<Value>>;
+    async fn list_groups(&self) -> anyhow::Result<Vec<String>>;
+    async fn destroy(&self) -> anyhow::Result<()>;
+}
+```
+
+Source: `/workspace/source/src/modules/state/adapters/mod.rs:16`
+
+## Methods
+
+### `set`
+
+```rust
+async fn set(&self, scope: &str, key: &str, value: Value) -> anyhow::Result<SetResult>
+```
+
+Stores a value in the state store.
+
+**Parameters:**
+- `scope` - The namespace or group for the key
+- `key` - The unique identifier within the scope
+- `value` - JSON value to store
+
+**Returns:** `SetResult` containing information about the operation
+
+### `get`
+
+```rust
+async fn get(&self, scope: &str, key: &str) -> anyhow::Result<Option<Value>>
+```
+
+Retrieves a value from the state store.
+
+**Parameters:**
+- `scope` - The namespace or group for the key
+- `key` - The unique identifier within the scope
+
+**Returns:** `Some(Value)` if found, `None` if not found
+
+### `delete`
+
+```rust
+async fn delete(&self, scope: &str, key: &str) -> anyhow::Result<()>
+```
+
+Removes a key-value pair from the state store.
+
+**Parameters:**
+- `scope` - The namespace or group for the key
+- `key` - The unique identifier within the scope
+
+### `update`
+
+```rust
+async fn update(
+    &self,
+    scope: &str,
+    key: &str,
+    ops: Vec<UpdateOp>,
+) -> anyhow::Result<UpdateResult>
+```
+
+Performs atomic update operations on a stored value.
+
+**Parameters:**
+- `scope` - The namespace or group for the key
+- `key` - The unique identifier within the scope
+- `ops` - Vector of update operations to apply
+
+**Returns:** `UpdateResult` containing the updated value
+
+### `list`
+
+```rust
+async fn list(&self, scope: &str) -> anyhow::Result<Vec<Value>>
+```
+
+Lists all values within a scope.
+
+**Parameters:**
+- `scope` - The namespace or group to list
+
+**Returns:** Vector of all values in the scope
+
+### `list_groups`
+
+```rust
+async fn list_groups(&self) -> anyhow::Result<Vec<String>>
+```
+
+Lists all available scopes/groups in the state store.
+
+**Returns:** Vector of scope names
+
+### `destroy`
+
+```rust
+async fn destroy(&self) -> anyhow::Result<()>
+```
+
+Cleans up resources and closes connections for the adapter.
+
+## UpdateOp
+
+The `UpdateOp` enum defines atomic operations that can be applied to stored values:
+
+```rust
+pub enum UpdateOp {
+    Set { path: FieldPath, value: Option<Value> },
+    Merge { path: Option<FieldPath>, value: Value },
+    Increment { path: FieldPath, by: i64 },
+    Decrement { path: FieldPath, by: i64 },
+    Remove { path: FieldPath },
+}
+```
+
+### Update Operations
+
+- **Set**: Sets a field at the specified path to a new value
+- **Merge**: Merges an object with the existing value
+- **Increment**: Adds a numeric value to a field
+- **Decrement**: Subtracts a numeric value from a field
+- **Remove**: Removes a field at the specified path
+
+## Available Adapters
+
+### RedisAdapter
+
+Redis-based state persistence with atomic operations.
+
+```javascript
+modules: {
+  state: {
+    adapter: "modules::state::RedisAdapter",
+    config: {
+      redis_url: "redis://localhost:6379"
+    }
+  }
+}
+```
+
+Source: `/workspace/source/src/modules/state/adapters/redis_adapter.rs`
+
+### KvStore
+
+In-memory key-value store for development and testing.
+
+```javascript
+modules: {
+  state: {
+    adapter: "modules::state::KvStore"
+  }
+}
+```
+
+Source: `/workspace/source/src/modules/state/adapters/kv_store.rs`
+
+### Bridge
+
+Bridges state operations to another III instance.
+
+```javascript
+modules: {
+  state: {
+    adapter: "modules::state::Bridge",
+    config: {
+      url: "https://remote-instance.example.com"
+    }
+  }
+}
+```
+
+Source: `/workspace/source/src/modules/state/adapters/bridge.rs`
+
+## Example Implementation
+
+```rust
+use async_trait::async_trait;
+use serde_json::Value;
+use iii_sdk::{UpdateOp, UpdateResult, types::SetResult};
+
+struct CustomStateAdapter {
+    // Your storage implementation
+}
+
+#[async_trait]
+impl StateAdapter for CustomStateAdapter {
+    async fn set(&self, scope: &str, key: &str, value: Value) -> anyhow::Result<SetResult> {
+        // Store the value
+        Ok(SetResult {
+            key: key.to_string(),
+            value: Some(value),
+            created: true,
+        })
+    }
+
+    async fn get(&self, scope: &str, key: &str) -> anyhow::Result<Option<Value>> {
+        // Retrieve the value
+        Ok(None)
+    }
+
+    async fn delete(&self, scope: &str, key: &str) -> anyhow::Result<()> {
+        // Delete the key
+        Ok(())
+    }
+
+    async fn update(
+        &self,
+        scope: &str,
+        key: &str,
+        ops: Vec<UpdateOp>,
+    ) -> anyhow::Result<UpdateResult> {
+        // Apply update operations atomically
+        for op in &ops {
+            match op {
+                UpdateOp::Set { path, value } => { /* ... */ },
+                UpdateOp::Merge { path, value } => { /* ... */ },
+                UpdateOp::Increment { path, by } => { /* ... */ },
+                UpdateOp::Decrement { path, by } => { /* ... */ },
+                UpdateOp::Remove { path } => { /* ... */ },
+            }
+        }
+        Ok(UpdateResult {
+            key: key.to_string(),
+            value: None,
+        })
+    }
+
+    async fn list(&self, scope: &str) -> anyhow::Result<Vec<Value>> {
+        Ok(vec![])
+    }
+
+    async fn list_groups(&self) -> anyhow::Result<Vec<String>> {
+        Ok(vec![])
+    }
+
+    async fn destroy(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+```
+
+## Related
+
+- [State Module](/modules/state)
+- [Custom Adapters](/advanced/custom-adapters)

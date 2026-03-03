@@ -1,0 +1,188 @@
+---
+title: WorkerRegistered
+description: Confirmation that a worker has been registered with the framework
+---
+
+## Response
+
+Sent by the framework to confirm that a worker has successfully registered and is ready to communicate. This message is typically sent after the worker establishes a WebSocket connection.
+
+<ResponseField name="type" type="string" required>
+  Message type. Must be `"workerregistered"`.
+</ResponseField>
+
+<ResponseField name="worker_id" type="string" required>
+  Unique identifier assigned to this worker by the framework.
+</ResponseField>
+
+## Examples
+
+### Basic Worker Registration Confirmation
+
+```json
+{
+  "type": "workerregistered",
+  "worker_id": "worker_a1b2c3d4e5f6"
+}
+```
+
+### UUID-Based Worker ID
+
+```json
+{
+  "type": "workerregistered",
+  "worker_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+## Connection Flow
+
+Typical sequence when a worker connects:
+
+```javascript
+// 1. Worker establishes WebSocket connection
+const ws = new WebSocket('ws://localhost:3000');
+
+// 2. Worker waits for WorkerRegistered message
+ws.on('message', (data) => {
+  const msg = JSON.parse(data);
+  
+  if (msg.type === 'workerregistered') {
+    console.log(`Worker registered with ID: ${msg.worker_id}`);
+    
+    // 3. Worker can now register services, functions, and triggers
+    ws.send(JSON.stringify({
+      type: 'registerservice',
+      id: 'my_service',
+      name: 'My Service'
+    }));
+  }
+});
+```
+
+## Handling Registration
+
+### Store Worker ID
+
+```javascript
+let workerId = null;
+
+ws.on('message', (data) => {
+  const msg = JSON.parse(data);
+  
+  if (msg.type === 'workerregistered') {
+    workerId = msg.worker_id;
+    console.log('Worker ID:', workerId);
+    
+    // Proceed with initialization
+    initializeWorker();
+  }
+});
+```
+
+### Registration with Retry
+
+```javascript
+function connectWorker() {
+  const ws = new WebSocket('ws://localhost:3000');
+  
+  const registrationTimeout = setTimeout(() => {
+    console.error('Worker registration timeout');
+    ws.close();
+    // Retry connection
+    setTimeout(connectWorker, 5000);
+  }, 10000);
+  
+  ws.on('message', (data) => {
+    const msg = JSON.parse(data);
+    
+    if (msg.type === 'workerregistered') {
+      clearTimeout(registrationTimeout);
+      console.log('Worker registered:', msg.worker_id);
+    }
+  });
+}
+```
+
+### Registration Event Handler
+
+```javascript
+class WorkerClient {
+  constructor() {
+    this.workerId = null;
+    this.registered = false;
+  }
+  
+  connect() {
+    this.ws = new WebSocket('ws://localhost:3000');
+    
+    this.ws.on('message', (data) => {
+      const msg = JSON.parse(data);
+      this.handleMessage(msg);
+    });
+  }
+  
+  handleMessage(msg) {
+    switch (msg.type) {
+      case 'workerregistered':
+        this.onWorkerRegistered(msg.worker_id);
+        break;
+      // Handle other message types...
+    }
+  }
+  
+  onWorkerRegistered(workerId) {
+    this.workerId = workerId;
+    this.registered = true;
+    console.log(`Worker registered: ${workerId}`);
+    
+    // Emit event for application code
+    this.emit('registered', workerId);
+  }
+}
+```
+
+## Error Cases
+
+### Registration Timeout
+
+If a WorkerRegistered message is not received within a reasonable timeout (typically 10-30 seconds):
+
+- The connection may have failed during handshake
+- The framework may be unresponsive or overloaded
+- Network issues may be preventing communication
+- Consider closing the connection and retrying
+
+### Connection Closed Before Registration
+
+If the WebSocket connection closes before receiving WorkerRegistered:
+
+- The framework may have rejected the connection
+- Authentication or authorization may have failed
+- The framework may be shutting down
+- Check framework logs for rejection reasons
+
+## Notes
+
+- WorkerRegistered is typically the first message received after connecting
+- The worker should not send registration messages (RegisterService, RegisterFunction, etc.) until receiving WorkerRegistered
+- The `worker_id` can be used for logging, monitoring, and debugging
+- The `worker_id` format is determined by the framework implementation
+- Store the `worker_id` for the duration of the connection
+- On reconnection, a new `worker_id` will typically be assigned
+- The worker must re-register all services, functions, and triggers after receiving a new WorkerRegistered message
+
+## Best Practices
+
+- **Wait for confirmation**: Don't send other messages until WorkerRegistered is received
+- **Implement timeout**: Set a timeout for registration and reconnect if not received
+- **Log the worker ID**: Include worker_id in all logs for traceability
+- **Handle reconnection**: Re-register everything when a new worker_id is assigned
+- **Emit events**: Notify your application code when registration completes
+- **Store state**: Track registration status to prevent sending messages prematurely
+
+## Related Messages
+
+- [RegisterService](/api/messages/register-service) - Register a service after worker registration
+- [RegisterFunction](/api/messages/register-function) - Register functions after worker registration
+- [Ping & Pong](/api/messages/ping-pong) - Maintain connection health after registration

@@ -1,0 +1,427 @@
+---
+title: "HTTP Functions Module"
+description: "Proxy and invoke HTTP endpoints as functions"
+---
+
+The HTTP Functions module enables you to register and invoke HTTP endpoints as native functions in your iii application. Perfect for integrating with external APIs, webhooks, and microservices.
+
+## Configuration
+
+Configure the HTTP Functions module in `config.yaml`:
+
+```yaml config.yaml
+modules:
+  - class: modules::http_functions::HttpFunctionsModule
+    config:
+      security:
+        url_allowlist:
+          - "https://api.example.com/*"
+          - "https://*.trusted-domain.com/*"
+        block_private_ips: true
+        require_https: true
+```
+
+## Security Configuration
+
+The module includes built-in security controls to protect against SSRF and other vulnerabilities.
+
+<ParamField path="security.url_allowlist" type="array<string>" default="['*']">
+  List of URL patterns allowed for HTTP function invocations. Supports wildcards.
+  
+  Examples:
+  - `https://api.example.com/*` - Allow all endpoints under api.example.com
+  - `https://*.example.com/*` - Allow all subdomains of example.com
+  - `*` - Allow all URLs (use with caution)
+</ParamField>
+
+<ParamField path="security.block_private_ips" type="boolean" default={true}>
+  Block requests to private IP ranges (RFC 1918) to prevent SSRF attacks.
+  
+  Blocked ranges:
+  - `10.0.0.0/8`
+  - `172.16.0.0/12`
+  - `192.168.0.0/16`
+  - `127.0.0.0/8`
+  - `169.254.0.0/16`
+</ParamField>
+
+<ParamField path="security.require_https" type="boolean" default={true}>
+  Require HTTPS for all HTTP function invocations. Rejects HTTP URLs.
+</ParamField>
+
+<Warning>
+  The default security settings (`block_private_ips: true`, `require_https: true`) are recommended for production deployments to prevent SSRF vulnerabilities.
+</Warning>
+
+## Registering HTTP Functions
+
+HTTP functions are registered dynamically at runtime using the `register_http_function` method:
+
+```typescript
+import { HttpFunctionConfig } from 'iii';
+
+// Register an HTTP endpoint as a function
+const config: HttpFunctionConfig = {
+  function_path: 'external.getUser',
+  url: 'https://api.example.com/users/{userId}',
+  method: 'GET',
+  description: 'Fetch user details from external API',
+  timeout_ms: 5000,
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': process.env.API_KEY,
+  },
+};
+
+await httpFunctionsModule.register_http_function(config);
+```
+
+### HttpFunctionConfig
+
+<ParamField path="function_path" type="string" required>
+  The function ID to register. Used when calling the function via `client.call()`.
+</ParamField>
+
+<ParamField path="url" type="string" required>
+  The HTTP endpoint URL. Supports path parameters using `{param}` syntax.
+  
+  Must pass URL validation against the allowlist.
+</ParamField>
+
+<ParamField path="method" type="string" required>
+  HTTP method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`
+</ParamField>
+
+<ParamField path="description" type="string">
+  Optional description of the function's purpose
+</ParamField>
+
+<ParamField path="timeout_ms" type="number" default={30000}>
+  Request timeout in milliseconds
+</ParamField>
+
+<ParamField path="headers" type="object">
+  HTTP headers to include in the request. Common use cases:
+  - Authentication: `Authorization: Bearer {token}`
+  - Content type: `Content-Type: application/json`
+  - API keys: `X-API-Key: {key}`
+</ParamField>
+
+<ParamField path="auth" type="HttpAuth">
+  Authentication configuration. See [Authentication](#authentication) section.
+</ParamField>
+
+<ParamField path="request_format" type="object">
+  JSON schema for request validation
+</ParamField>
+
+<ParamField path="response_format" type="object">
+  JSON schema for response validation
+</ParamField>
+
+<ParamField path="metadata" type="object">
+  Arbitrary metadata attached to the function
+</ParamField>
+
+## Invoking HTTP Functions
+
+Once registered, HTTP functions are called like any other function:
+
+```typescript
+// Call the registered HTTP function
+const result = await client.call('external.getUser', {
+  userId: 123,
+  expand: 'profile',
+});
+
+console.log(result);
+// { id: 123, name: 'Alice', email: 'alice@example.com', ... }
+```
+
+### Path Parameters
+
+URL path parameters are extracted from the input data:
+
+```typescript
+// URL: https://api.example.com/users/{userId}/posts/{postId}
+const result = await client.call('external.getUserPost', {
+  userId: 123,
+  postId: 456,
+});
+// Makes request to: https://api.example.com/users/123/posts/456
+```
+
+### Query Parameters
+
+Non-path parameters are added as query strings:
+
+```typescript
+// URL: https://api.example.com/users/{userId}
+const result = await client.call('external.getUser', {
+  userId: 123,
+  expand: 'profile',
+  fields: 'name,email',
+});
+// Makes request to: https://api.example.com/users/123?expand=profile&fields=name,email
+```
+
+### Request Body
+
+For POST/PUT/PATCH requests, the input is sent as the request body:
+
+```typescript
+// URL: https://api.example.com/users
+// Method: POST
+const result = await client.call('external.createUser', {
+  name: 'Bob',
+  email: 'bob@example.com',
+});
+// Sends POST request with JSON body: { name: 'Bob', email: 'bob@example.com' }
+```
+
+## Authentication
+
+The module supports various authentication methods:
+
+### API Key in Headers
+
+```typescript
+const config = {
+  function_path: 'external.api',
+  url: 'https://api.example.com/data',
+  method: 'GET',
+  headers: {
+    'X-API-Key': process.env.API_KEY,
+  },
+};
+```
+
+### Bearer Token
+
+```typescript
+const config = {
+  function_path: 'external.api',
+  url: 'https://api.example.com/data',
+  method: 'GET',
+  headers: {
+    'Authorization': `Bearer ${process.env.ACCESS_TOKEN}`,
+  },
+};
+```
+
+### Basic Auth
+
+```typescript
+const config = {
+  function_path: 'external.api',
+  url: 'https://api.example.com/data',
+  method: 'GET',
+  auth: {
+    type: 'basic',
+    username: 'user',
+    password: 'pass',
+  },
+};
+```
+
+### OAuth 2.0
+
+```typescript
+const config = {
+  function_path: 'external.api',
+  url: 'https://api.example.com/data',
+  method: 'GET',
+  auth: {
+    type: 'oauth2',
+    token_url: 'https://auth.example.com/token',
+    client_id: process.env.CLIENT_ID,
+    client_secret: process.env.CLIENT_SECRET,
+  },
+};
+```
+
+## Unregistering Functions
+
+Remove HTTP functions when they're no longer needed:
+
+```typescript
+await httpFunctionsModule.unregister_http_function('external.getUser');
+```
+
+## Use Cases
+
+### External API Integration
+
+```typescript
+// Register multiple endpoints from the same API
+await httpFunctionsModule.register_http_function({
+  function_path: 'github.getUser',
+  url: 'https://api.github.com/users/{username}',
+  method: 'GET',
+  headers: {
+    'Authorization': `token ${process.env.GITHUB_TOKEN}`,
+  },
+});
+
+await httpFunctionsModule.register_http_function({
+  function_path: 'github.listRepos',
+  url: 'https://api.github.com/users/{username}/repos',
+  method: 'GET',
+  headers: {
+    'Authorization': `token ${process.env.GITHUB_TOKEN}`,
+  },
+});
+
+// Use in your functions
+export async function analyzeUser(input: { username: string }) {
+  const user = await client.call('github.getUser', input);
+  const repos = await client.call('github.listRepos', input);
+  
+  return {
+    user,
+    repoCount: repos.length,
+    languages: repos.map(r => r.language),
+  };
+}
+```
+
+### Microservice Communication
+
+```typescript
+// Register internal microservices as functions
+await httpFunctionsModule.register_http_function({
+  function_path: 'auth.validateToken',
+  url: 'http://auth-service:3000/validate',
+  method: 'POST',
+  timeout_ms: 2000,
+});
+
+await httpFunctionsModule.register_http_function({
+  function_path: 'billing.createInvoice',
+  url: 'http://billing-service:3000/invoices',
+  method: 'POST',
+});
+```
+
+### Webhook Forwarding
+
+```typescript
+// Forward webhook data to external service
+await httpFunctionsModule.register_http_function({
+  function_path: 'slack.sendMessage',
+  url: 'https://hooks.slack.com/services/YOUR/WEBHOOK/URL',
+  method: 'POST',
+});
+
+export async function onOrderCreated(data: any) {
+  await client.call('slack.sendMessage', {
+    text: `New order #${data.orderId} for $${data.amount}`,
+  });
+}
+```
+
+## Error Handling
+
+### URL Validation Errors
+
+```typescript
+// Fails if URL not in allowlist
+await httpFunctionsModule.register_http_function({
+  function_path: 'bad.function',
+  url: 'https://blocked-domain.com/api',
+  method: 'GET',
+});
+// Returns: { code: 'url_validation_failed', message: '...' }
+```
+
+### Request Failures
+
+```typescript
+const result = await client.call('external.api', { ... });
+
+if (result.error) {
+  console.error('HTTP request failed:', result.error);
+  // Handle timeout, network errors, etc.
+}
+```
+
+## Security Best Practices
+
+1. **Use allowlists** - Restrict HTTP functions to trusted domains
+2. **Enable HTTPS** - Set `require_https: true` in production
+3. **Block private IPs** - Keep `block_private_ips: true` to prevent SSRF
+4. **Rotate credentials** - Store API keys in environment variables, not hardcoded
+5. **Validate responses** - Use `response_format` to validate external API responses
+6. **Set timeouts** - Prevent hanging requests with appropriate `timeout_ms` values
+7. **Rate limiting** - Implement rate limiting for external API calls
+8. **Monitor usage** - Track HTTP function invocations for unusual patterns
+
+## Production Configuration
+
+```yaml config.yaml
+modules:
+  - class: modules::http_functions::HttpFunctionsModule
+    config:
+      security:
+        # Strict allowlist for production
+        url_allowlist:
+          - "https://api.stripe.com/*"
+          - "https://api.github.com/*"
+          - "https://*.googleapis.com/*"
+        
+        # Prevent SSRF attacks
+        block_private_ips: true
+        
+        # Enforce HTTPS
+        require_https: true
+```
+
+## Development Configuration
+
+```yaml config.yaml
+modules:
+  - class: modules::http_functions::HttpFunctionsModule
+    config:
+      security:
+        # Allow all URLs in development
+        url_allowlist:
+          - "*"
+        
+        # Allow localhost/private IPs for local services
+        block_private_ips: false
+        
+        # Allow HTTP for local testing
+        require_https: false
+```
+
+<Warning>
+  Never use the development configuration in production. Always enforce strict security controls.
+</Warning>
+
+## Limitations
+
+1. **Synchronous only** - HTTP functions are invoked synchronously
+2. **No streaming** - Response must fit in memory
+3. **No retries** - Failed requests do not retry automatically
+4. **No caching** - Responses are not cached (implement caching in your code)
+
+## API Reference
+
+### HttpInvoker
+
+The underlying HTTP invoker is accessible via:
+
+```typescript
+const invoker = httpFunctionsModule.http_invoker();
+```
+
+### Registered Functions
+
+Access the registry of HTTP functions:
+
+```typescript
+const functions = httpFunctionsModule.http_functions();
+for (const [path, config] of functions.entries()) {
+  console.log(`${path}: ${config.url}`);
+}
+```

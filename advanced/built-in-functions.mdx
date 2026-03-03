@@ -1,0 +1,944 @@
+---
+title: Built-in Functions
+description: Complete reference for all built-in functions automatically registered by iii framework modules
+icon: 'function'
+---
+
+Built-in functions are automatically registered by iii framework modules and can be invoked from any worker without manual registration. These functions provide core engine capabilities like worker management, key-value storage, and observability.
+
+## Worker Module Functions
+
+Functions for managing workers, channels, and registered functions.
+
+### engine::channels::create
+
+Create a streaming channel pair for real-time communication.
+
+<ParamField path="buffer_size" type="number" optional>
+  Channel buffer size (default: 64, max: 1024)
+</ParamField>
+
+<ResponseField name="writer" type="StreamChannelRef">
+  Writer channel reference for sending data
+</ResponseField>
+
+<ResponseField name="reader" type="StreamChannelRef">
+  Reader channel reference for receiving data
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::channels::create', {
+  buffer_size: 100
+});
+// { writer: { id: "...", ... }, reader: { id: "...", ... } }
+```
+
+### engine::functions::list
+
+List all registered functions in the engine.
+
+<ParamField path="include_internal" type="boolean" optional default={false}>
+  Include internal engine functions (engine.* prefix)
+</ParamField>
+
+<ResponseField name="functions" type="array">
+  Array of function information objects
+  <Expandable title="FunctionInfo fields">
+    <ResponseField name="function_id" type="string">Function identifier</ResponseField>
+    <ResponseField name="description" type="string">Function description</ResponseField>
+    <ResponseField name="request_format" type="object">Request schema (JSON Schema)</ResponseField>
+    <ResponseField name="response_format" type="object">Response schema (JSON Schema)</ResponseField>
+    <ResponseField name="metadata" type="object">Additional metadata</ResponseField>
+  </Expandable>
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::functions::list', {
+  include_internal: false
+});
+// { functions: [{ function_id: "myService::myFunction", ... }] }
+```
+
+### engine::workers::list
+
+List all connected workers with metrics.
+
+<ParamField path="worker_id" type="string" optional>
+  Filter by specific worker ID
+</ParamField>
+
+<ResponseField name="workers" type="array">
+  Array of worker information objects
+  <Expandable title="WorkerInfo fields">
+    <ResponseField name="id" type="string">Worker unique identifier</ResponseField>
+    <ResponseField name="name" type="string">Worker name</ResponseField>
+    <ResponseField name="runtime" type="string">Runtime environment (e.g., "node", "rust")</ResponseField>
+    <ResponseField name="version" type="string">Worker version</ResponseField>
+    <ResponseField name="os" type="string">Operating system</ResponseField>
+    <ResponseField name="ip_address" type="string">IP address</ResponseField>
+    <ResponseField name="status" type="string">Worker status</ResponseField>
+    <ResponseField name="connected_at_ms" type="number">Connection timestamp (milliseconds)</ResponseField>
+    <ResponseField name="function_count" type="number">Number of registered functions</ResponseField>
+    <ResponseField name="functions" type="array">Array of function IDs</ResponseField>
+    <ResponseField name="active_invocations" type="number">Current active invocations</ResponseField>
+    <ResponseField name="latest_metrics" type="object">Latest worker metrics</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="timestamp" type="number">
+  Query timestamp (milliseconds)
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::workers::list', {});
+// { workers: [{ id: "...", name: "worker-1", runtime: "node", ... }], timestamp: 1234567890 }
+```
+
+### engine::triggers::list
+
+List all registered triggers.
+
+<ParamField path="include_internal" type="boolean" optional default={false}>
+  Include internal engine triggers
+</ParamField>
+
+<ResponseField name="triggers" type="array">
+  Array of trigger information objects
+  <Expandable title="TriggerInfo fields">
+    <ResponseField name="id" type="string">Trigger unique identifier</ResponseField>
+    <ResponseField name="trigger_type" type="string">Type of trigger</ResponseField>
+    <ResponseField name="function_id" type="string">Target function ID</ResponseField>
+    <ResponseField name="config" type="object">Trigger configuration</ResponseField>
+  </Expandable>
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::triggers::list', {
+  include_internal: false
+});
+// { triggers: [{ id: "...", trigger_type: "cron", function_id: "...", config: {...} }] }
+```
+
+### engine::workers::register
+
+Register or update worker metadata.
+
+<ParamField path="_caller_worker_id" type="string" required>
+  Worker ID (automatically injected)
+</ParamField>
+
+<ParamField path="runtime" type="string" optional>
+  Runtime environment (e.g., "node", "rust", "python")
+</ParamField>
+
+<ParamField path="version" type="string" optional>
+  Worker version
+</ParamField>
+
+<ParamField path="name" type="string" optional>
+  Worker name
+</ParamField>
+
+<ParamField path="os" type="string" optional>
+  Operating system information
+</ParamField>
+
+<ParamField path="telemetry" type="object" optional>
+  Telemetry metadata
+  <Expandable title="WorkerTelemetryMeta fields">
+    <ParamField path="language" type="string">Language/locale</ParamField>
+    <ParamField path="project_name" type="string">Project name</ParamField>
+    <ParamField path="framework" type="string">Framework name</ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="success" type="boolean">
+  Registration success status
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::workers::register', {
+  runtime: 'node',
+  version: '1.0.0',
+  name: 'my-worker',
+  os: 'linux x64'
+});
+// { success: true }
+```
+
+---
+
+## KV Server Functions
+
+Key-value storage functions for persistent state.
+
+### kv_server::get
+
+Get a value by key from the KV store.
+
+<ParamField path="index" type="string" required>
+  Index name (namespace)
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  Key to retrieve
+</ParamField>
+
+<ResponseField name="value" type="any">
+  The stored value, or null if not found
+</ResponseField>
+
+```javascript
+const value = await invoke('kv_server::get', {
+  index: 'users',
+  key: 'user:123'
+});
+// { name: "Alice", email: "alice@example.com" }
+```
+
+### kv_server::set
+
+Set a value by key in the KV store.
+
+<ParamField path="index" type="string" required>
+  Index name (namespace)
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  Key to set
+</ParamField>
+
+<ParamField path="value" type="any" required>
+  Value to store (any JSON-serializable data)
+</ParamField>
+
+<ResponseField name="key" type="string">
+  The key that was set
+</ResponseField>
+
+<ResponseField name="value" type="any">
+  The value that was stored
+</ResponseField>
+
+<ResponseField name="created" type="boolean">
+  Whether this was a new key (true) or update (false)
+</ResponseField>
+
+```javascript
+const result = await invoke('kv_server::set', {
+  index: 'users',
+  key: 'user:123',
+  value: { name: 'Alice', email: 'alice@example.com' }
+});
+// { key: "user:123", value: {...}, created: true }
+```
+
+### kv_server::delete
+
+Delete a value by key from the KV store.
+
+<ParamField path="index" type="string" required>
+  Index name (namespace)
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  Key to delete
+</ParamField>
+
+<ResponseField name="deleted" type="boolean">
+  Whether the key was deleted
+</ResponseField>
+
+<ResponseField name="old_value" type="any">
+  The previous value, if it existed
+</ResponseField>
+
+```javascript
+const result = await invoke('kv_server::delete', {
+  index: 'users',
+  key: 'user:123'
+});
+// { deleted: true, old_value: {...} }
+```
+
+### kv_server::update
+
+Update a value with atomic operations.
+
+<ParamField path="index" type="string" required>
+  Index name (namespace)
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  Key to update
+</ParamField>
+
+<ParamField path="ops" type="array" required>
+  Array of update operations
+</ParamField>
+
+<ResponseField name="old_value" type="any">
+  The value before the update
+</ResponseField>
+
+<ResponseField name="new_value" type="any">
+  The value after the update
+</ResponseField>
+
+**Update Operations:**
+
+- `Set { path, value }` - Set a field at the specified path
+- `Merge { path, value }` - Merge an object with the existing value
+- `Increment { path, by }` - Add a numeric value to a field
+- `Decrement { path, by }` - Subtract a numeric value from a field
+- `Remove { path }` - Remove a field at the specified path
+
+```javascript
+import { UpdateOp } from 'iii-sdk';
+
+const result = await invoke('kv_server::update', {
+  index: 'users',
+  key: 'user:123',
+  ops: [
+    UpdateOp.increment('loginCount', 1),
+    UpdateOp.set('lastLogin', Date.now())
+  ]
+});
+// { old_value: {...}, new_value: {...} }
+```
+
+### kv_server::list
+
+List all values in an index.
+
+<ParamField path="index" type="string" required>
+  Index name (namespace)
+</ParamField>
+
+<ResponseField name="values" type="array">
+  Array of all values in the index
+</ResponseField>
+
+```javascript
+const result = await invoke('kv_server::list', {
+  index: 'users'
+});
+// [{ key: "user:123", value: {...} }, { key: "user:456", value: {...} }]
+```
+
+### kv_server::list_keys_with_prefix
+
+List all keys with a specific prefix.
+
+<ParamField path="prefix" type="string" required>
+  Key prefix to filter by
+</ParamField>
+
+<ResponseField name="keys" type="array">
+  Array of matching keys
+</ResponseField>
+
+```javascript
+const result = await invoke('kv_server::list_keys_with_prefix', {
+  prefix: 'user:'
+});
+// ["user:123", "user:456", "user:789"]
+```
+
+---
+
+## Observability Functions
+
+Functions for logging, tracing, metrics, and monitoring.
+
+## Logging Functions
+
+OTEL-native logging functions with structured data support.
+
+### engine::log::info
+
+Log an informational message.
+
+<ParamField path="message" type="string" required>
+  Log message
+</ParamField>
+
+<ParamField path="data" type="object" optional>
+  Structured data/attributes
+</ParamField>
+
+<ParamField path="trace_id" type="string" optional>
+  Trace ID for correlation
+</ParamField>
+
+<ParamField path="span_id" type="string" optional>
+  Span ID for correlation
+</ParamField>
+
+<ParamField path="service_name" type="string" optional>
+  Service name (defaults to function name)
+</ParamField>
+
+```javascript
+await invoke('engine::log::info', {
+  message: 'User logged in',
+  data: { userId: '123', ip: '192.168.1.1' }
+});
+```
+
+### engine::log::warn
+
+Log a warning message.
+
+Parameters are identical to `engine::log::info`.
+
+```javascript
+await invoke('engine::log::warn', {
+  message: 'Rate limit approaching',
+  data: { current: 950, limit: 1000 }
+});
+```
+
+### engine::log::error
+
+Log an error message.
+
+Parameters are identical to `engine::log::info`.
+
+```javascript
+await invoke('engine::log::error', {
+  message: 'Database connection failed',
+  data: { error: err.message, retries: 3 }
+});
+```
+
+### engine::log::debug
+
+Log a debug message.
+
+Parameters are identical to `engine::log::info`.
+
+```javascript
+await invoke('engine::log::debug', {
+  message: 'Processing request',
+  data: { requestId: '...' }
+});
+```
+
+### engine::log::trace
+
+Log a trace-level message.
+
+Parameters are identical to `engine::log::info`.
+
+```javascript
+await invoke('engine::log::trace', {
+  message: 'Function entry',
+  data: { args: [...] }
+});
+```
+
+## Baggage Functions
+
+Access and manage OpenTelemetry baggage for context propagation.
+
+### engine::baggage::get
+
+Get a baggage item value from the current context.
+
+<ParamField path="key" type="string" required>
+  Baggage key to retrieve
+</ParamField>
+
+<ResponseField name="value" type="string">
+  Baggage value, or null if not found
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::baggage::get', {
+  key: 'user-id'
+});
+// { value: "123" }
+```
+
+### engine::baggage::set
+
+Set a baggage item value.
+
+<Note>
+Baggage in OpenTelemetry is immutable. This function creates a new context but cannot propagate it back to the caller. For real baggage propagation, use SDK-level baggage headers.
+</Note>
+
+<ParamField path="key" type="string" required>
+  Baggage key to set
+</ParamField>
+
+<ParamField path="value" type="string" required>
+  Baggage value
+</ParamField>
+
+```javascript
+await invoke('engine::baggage::set', {
+  key: 'user-id',
+  value: '123'
+});
+```
+
+### engine::baggage::get_all
+
+Get all baggage items from the current context.
+
+<ResponseField name="baggage" type="object">
+  Object with all baggage key-value pairs
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::baggage::get_all', {});
+// { baggage: { "user-id": "123", "request-id": "..." } }
+```
+
+## Traces Functions
+
+Query and manage distributed traces.
+
+<Note>
+Trace storage is only available when the OTEL exporter is set to `memory` or `both` in configuration.
+</Note>
+
+### engine::traces::list
+
+List stored traces with filtering and pagination.
+
+<ParamField path="trace_id" type="string" optional>
+  Filter by specific trace ID
+</ParamField>
+
+<ParamField path="offset" type="number" optional default={0}>
+  Pagination offset
+</ParamField>
+
+<ParamField path="limit" type="number" optional default={100}>
+  Maximum number of spans to return
+</ParamField>
+
+<ParamField path="service_name" type="string" optional>
+  Filter by service name (substring match)
+</ParamField>
+
+<ParamField path="name" type="string" optional>
+  Filter by span name (substring match)
+</ParamField>
+
+<ParamField path="status" type="string" optional>
+  Filter by status (substring match)
+</ParamField>
+
+<ParamField path="min_duration_ms" type="number" optional>
+  Minimum span duration in milliseconds
+</ParamField>
+
+<ParamField path="max_duration_ms" type="number" optional>
+  Maximum span duration in milliseconds
+</ParamField>
+
+<ParamField path="start_time" type="number" optional>
+  Start time in Unix timestamp milliseconds
+</ParamField>
+
+<ParamField path="end_time" type="number" optional>
+  End time in Unix timestamp milliseconds
+</ParamField>
+
+<ParamField path="sort_by" type="string" optional default="start_time">
+  Sort field: "duration", "start_time", or "name"
+</ParamField>
+
+<ParamField path="sort_order" type="string" optional default="asc">
+  Sort order: "asc" or "desc"
+</ParamField>
+
+<ParamField path="attributes" type="array" optional>
+  Filter by attributes (array of [key, value] pairs)
+</ParamField>
+
+<ParamField path="include_internal" type="boolean" optional default={false}>
+  Include internal engine traces
+</ParamField>
+
+<ResponseField name="spans" type="array">
+  Array of span objects
+</ResponseField>
+
+<ResponseField name="total" type="number">
+  Total number of matching spans
+</ResponseField>
+
+<ResponseField name="offset" type="number">
+  Current offset
+</ResponseField>
+
+<ResponseField name="limit" type="number">
+  Current limit
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::traces::list', {
+  service_name: 'api',
+  min_duration_ms: 100,
+  limit: 50
+});
+// { spans: [...], total: 150, offset: 0, limit: 50 }
+```
+
+### engine::traces::tree
+
+Get trace tree with nested children for a specific trace.
+
+<ParamField path="trace_id" type="string" required>
+  Trace ID to build the tree for
+</ParamField>
+
+<ResponseField name="roots" type="array">
+  Array of root span tree nodes with nested children
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::traces::tree', {
+  trace_id: '1234567890abcdef'
+});
+// { roots: [{ span: {...}, children: [...] }] }
+```
+
+### engine::traces::clear
+
+Clear all stored traces from memory.
+
+<ResponseField name="success" type="boolean">
+  Clear operation success status
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::traces::clear', {});
+// { success: true }
+```
+
+## Metrics Functions
+
+Query engine and SDK metrics.
+
+### engine::metrics::list
+
+List current metrics values.
+
+<ParamField path="start_time" type="number" optional>
+  Start time in Unix timestamp milliseconds
+</ParamField>
+
+<ParamField path="end_time" type="number" optional>
+  End time in Unix timestamp milliseconds
+</ParamField>
+
+<ParamField path="metric_name" type="string" optional>
+  Filter by metric name
+</ParamField>
+
+<ParamField path="aggregate_interval" type="number" optional>
+  Aggregate interval in seconds
+</ParamField>
+
+<ResponseField name="engine_metrics" type="object">
+  Engine internal metrics
+  <Expandable title="Engine metrics structure">
+    <ResponseField name="invocations" type="object">
+      Function invocation counters
+    </ResponseField>
+    <ResponseField name="workers" type="object">
+      Worker lifecycle counters
+    </ResponseField>
+    <ResponseField name="performance" type="object">
+      Performance statistics (avg, p50, p95, p99, min, max duration)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="sdk_metrics" type="array">
+  SDK-recorded metrics
+</ResponseField>
+
+<ResponseField name="aggregated_metrics" type="array">
+  Time-aggregated metrics (if aggregate_interval specified)
+</ResponseField>
+
+<ResponseField name="timestamp" type="number">
+  Query timestamp
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::metrics::list', {
+  start_time: Date.now() - 3600000,
+  end_time: Date.now(),
+  aggregate_interval: 60
+});
+// { engine_metrics: {...}, sdk_metrics: [...], timestamp: ... }
+```
+
+### engine::rollups::list
+
+Get pre-aggregated metrics rollups.
+
+<ParamField path="start_time" type="number" optional>
+  Start time in Unix timestamp milliseconds (default: 1 hour ago)
+</ParamField>
+
+<ParamField path="end_time" type="number" optional>
+  End time in Unix timestamp milliseconds (default: now)
+</ParamField>
+
+<ParamField path="level" type="number" optional default={0}>
+  Rollup level: 0 = 1 minute, 1 = 5 minutes, 2 = 1 hour
+</ParamField>
+
+<ParamField path="metric_name" type="string" optional>
+  Filter by metric name
+</ParamField>
+
+<ResponseField name="rollups" type="array">
+  Array of metric rollups
+</ResponseField>
+
+<ResponseField name="histogram_rollups" type="array">
+  Array of histogram rollups
+</ResponseField>
+
+<ResponseField name="level" type="number">
+  Rollup level used
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::rollups::list', {
+  level: 1, // 5-minute rollups
+  metric_name: 'http.requests'
+});
+// { rollups: [...], histogram_rollups: [...], level: 1 }
+```
+
+## Logs Functions
+
+Query and manage stored logs.
+
+### engine::logs::list
+
+List stored OTEL logs with filtering.
+
+<ParamField path="trace_id" type="string" optional>
+  Filter by trace ID
+</ParamField>
+
+<ParamField path="span_id" type="string" optional>
+  Filter by span ID
+</ParamField>
+
+<ParamField path="severity_min" type="number" optional>
+  Minimum severity number (1-24, higher = more severe)
+</ParamField>
+
+<ParamField path="severity_text" type="string" optional>
+  Filter by severity text (e.g., "ERROR", "WARN", "INFO")
+</ParamField>
+
+<ParamField path="start_time" type="number" optional>
+  Start time in Unix timestamp milliseconds
+</ParamField>
+
+<ParamField path="end_time" type="number" optional>
+  End time in Unix timestamp milliseconds
+</ParamField>
+
+<ParamField path="offset" type="number" optional>
+  Pagination offset
+</ParamField>
+
+<ParamField path="limit" type="number" optional>
+  Maximum number of logs to return
+</ParamField>
+
+<ResponseField name="logs" type="array">
+  Array of log entries
+</ResponseField>
+
+<ResponseField name="total" type="number">
+  Total number of matching logs
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::logs::list', {
+  severity_text: 'ERROR',
+  start_time: Date.now() - 3600000
+});
+// { logs: [...], total: 42, timestamp: ... }
+```
+
+### engine::logs::clear
+
+Clear all stored OTEL logs.
+
+<ResponseField name="success" type="boolean">
+  Clear operation success status
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::logs::clear', {});
+// { success: true }
+```
+
+## Health and Diagnostics
+
+### engine::health::check
+
+Check system health status.
+
+<ResponseField name="status" type="string">
+  Overall health status
+</ResponseField>
+
+<ResponseField name="components" type="object">
+  Health status of individual components
+  <Expandable title="Component structure">
+    <ResponseField name="otel" type="object">OTEL configuration status</ResponseField>
+    <ResponseField name="metrics" type="object">Metrics storage status</ResponseField>
+    <ResponseField name="logs" type="object">Logs storage status</ResponseField>
+    <ResponseField name="spans" type="object">Spans storage status</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="timestamp" type="number">
+  Check timestamp
+</ResponseField>
+
+<ResponseField name="version" type="string">
+  Engine version
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::health::check', {});
+// { status: "healthy", components: {...}, timestamp: ..., version: "0.7.0" }
+```
+
+### engine::sampling::rules
+
+Get active sampling rules configuration.
+
+<ResponseField name="traces" type="object">
+  Trace sampling configuration
+  <Expandable title="Traces sampling">
+    <ResponseField name="default_ratio" type="number">Default sampling ratio (0.0-1.0)</ResponseField>
+    <ResponseField name="rules" type="array">Per-operation sampling rules</ResponseField>
+    <ResponseField name="parent_based" type="boolean">Whether to respect parent sampling decisions</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="logs" type="object">
+  Log sampling configuration
+  <Expandable title="Logs sampling">
+    <ResponseField name="sampling_ratio" type="number">Log sampling ratio (0.0-1.0)</ResponseField>
+  </Expandable>
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::sampling::rules', {});
+// { traces: { default_ratio: 1.0, rules: [...], parent_based: true }, logs: { sampling_ratio: 1.0 } }
+```
+
+## Alerts Functions
+
+Manage and query alert states.
+
+### engine::alerts::list
+
+List current alert states.
+
+<ResponseField name="alerts" type="array">
+  Array of alert state objects
+</ResponseField>
+
+<ResponseField name="firing_count" type="number">
+  Number of currently firing alerts
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::alerts::list', {});
+// { alerts: [...], firing_count: 2, timestamp: ... }
+```
+
+### engine::alerts::evaluate
+
+Manually trigger alert evaluation.
+
+<ResponseField name="evaluated" type="boolean">
+  Whether evaluation occurred
+</ResponseField>
+
+<ResponseField name="triggered_alerts" type="array">
+  Array of alerts that triggered
+</ResponseField>
+
+```javascript
+const result = await invoke('engine::alerts::evaluate', {});
+// { evaluated: true, triggered_alerts: [...], timestamp: ... }
+```
+
+---
+
+## Error Handling
+
+All built-in functions return errors in a consistent format:
+
+```javascript
+{
+  code: "error_code",
+  message: "Human-readable error message"
+}
+```
+
+Common error codes:
+
+- `memory_exporter_not_enabled` - Trace/log storage not available
+- `serialization_error` - Failed to serialize response data
+- `invalid_input` - Invalid input parameters
+
+---
+
+## Best Practices
+
+<Card title="Use Internal Filtering" icon="filter">
+  Set `include_internal: false` when querying functions, triggers, or traces to exclude engine internals from results.
+</Card>
+
+<Card title="Batch KV Operations" icon="database">
+  Use `kv_server::update` with multiple operations instead of multiple `set` calls for better performance.
+</Card>
+
+<Card title="Monitor Memory Usage" icon="chart-line">
+  When using memory exporters, regularly clear old traces and logs to prevent memory growth.
+</Card>
+
+<Card title="Use Structured Logging" icon="book">
+  Always include the `data` parameter with structured attributes in log functions for better queryability.
+</Card>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Modules Overview" icon="puzzle-piece" href="/modules/overview">
+    Learn about iii framework modules
+  </Card>
+  <Card title="Observability" icon="chart-mixed" href="/modules/observability">
+    Configure OTEL and monitoring
+  </Card>
+  <Card title="State Management" icon="database" href="/modules/state">
+    Using the KV store for state
+  </Card>
+  <Card title="Custom Modules" icon="code" href="/modules/custom-modules">
+    Creating custom modules
+  </Card>
+</CardGroup>
