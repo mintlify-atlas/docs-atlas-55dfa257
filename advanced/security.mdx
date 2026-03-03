@@ -1,0 +1,630 @@
+---
+title: Security Best Practices
+description: Production security hardening, TLS, authentication, and deployment guidelines
+---
+
+iii is designed with security in mind, but proper configuration is essential for production deployments. This guide covers security best practices for running iii in production.
+
+## Production Docker Deployment
+
+### Hardened Container
+
+Use security-hardened Docker configuration:
+
+```bash
+docker run \
+  --read-only \
+  --tmpfs /tmp \
+  --cap-drop=ALL \
+  --cap-add=NET_BIND_SERVICE \
+  --security-opt=no-new-privileges:true \
+  -v ./config.yaml:/app/config.yaml:ro \
+  -p 3111:3111 -p 49134:49134 -p 3112:3112 -p 9464:9464 \
+  iiidev/iii:latest
+```
+
+**Security features:**
+
+- `--read-only`: Immutable root filesystem
+- `--tmpfs /tmp`: Writable temporary storage
+- `--cap-drop=ALL`: Drop all Linux capabilities
+- `--cap-add=NET_BIND_SERVICE`: Allow binding to privileged ports only
+- `--security-opt=no-new-privileges`: Prevent privilege escalation
+- `:ro`: Mount config as read-only
+
+### Distroless Base Image
+
+iii uses Google's distroless base image for minimal attack surface:
+
+```dockerfile
+FROM gcr.io/distroless/cc-debian12:nonroot
+
+COPY --from=builder /build/target/release/iii /app/iii
+
+EXPOSE 49134 3111 3112 9464
+ENTRYPOINTYP [/app/iii"]
+CMD ["--config", "/app/config.yaml"]
+```
+
+**Benefits:**
+- No shell or package manager
+- Minimal dependencies
+- Non-root user by default
+- Smaller attack surface
+
+## TLS with Caddy
+
+### Reverse Proxy Setup
+
+Use Caddy for automatic TLS with Let's Encrypt:
+
+**Caddyfile:**
+
+```caddy
+your-domain.com {
+    # HTTP API
+    handle /api/* {
+        reverse_proxy iii:3111
+    }
+
+    # Stream API
+    handle /streams/* {
+        reverse_proxy iii:3112
+    }
+
+    # WebSocket (worker connections)
+    handle /ws {
+        reverse_proxy iii:49134
+    }
+
+    # Default handler
+    handle {
+        reverse_proxy iii:3111
+    }
+}
+```
+
+**Docker Compose:**
+
+```yaml
+services:
+  caddy:
+    image: caddy:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - iii
+  
+  iii:
+    image: iiidev/iii:latest
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    # Don't expose ports publicly - only to Caddy
+    expose:
+      - "3111"
+      - "49134"
+      - "3112"
+      - "9464"
+
+volumes:
+  caddy-data:
+  caddy-config:
+```
+
+### WebSocket over TLS
+
+Connect workers using `wss://` (secure WebSocket):
+
+```javascript
+import { init } from 'iii-sdk';
+
+const iii = init('wss://your-domain.com/ws');
+```
+
+### Custom TLS Certificates
+
+For custom certificates, mount them in Caddy:
+
+```caddy
+your-domain.com {
+    tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+    
+    handle /ws {
+        reverse_proxy iii:49134
+    }
+}
+```
+
+## Authentication
+
+### HTTP Function Authentication
+
+iii supports multiple authentication methods for external HTTP functions:
+
+#### Bearer Token
+
+```json
+{
+  "type": "registerfunction",
+  "id": "external.api",
+  "invocation": {
+    "url": "https://api.example.com/endpoint",
+    "auth": {
+      "type": "bearer",
+      "token_key": "API_TOKEN"  // Environment variable name
+    }
+  }
+}
+```
+
+Set the token in environment:
+
+```bash
+export API_TOKEN="your-secret-token"
+```
+
+#### API Key
+
+```json
+{
+  "type": "registerfunction",
+  "id": "external.api",
+  "invocation": {
+    "url": "https://api.example.com/endpoint",
+    "auth": {
+      "type": "api_key",
+      "header": "X-API-Key",
+      "value_key": "EXTERNAL_API_KEY"
+    }
+  }
+}
+```
+
+#### HMAC Signature
+
+```json
+{
+  "type": "registerfunction",
+  "id": "external.api",
+  "invocation": {
+    "url": "https://api.example.com/endpoint",
+    "auth": {
+      "type": "hmac",
+      "secret_key": "HMAC_SECRET"
+    }
+  }
+}
+```
+
+<Warning>
+  Always use environment variables for secrets. Never hardcode credentials in configuration files or code.
+</Warning>
+
+### API Authentication
+
+For the HTTP API, implement authentication via middleware or reverse proxy:
+
+**Caddy with Basic Auth:**
+
+```caddy
+your-domain.com {
+    # Require auth for API
+    handle /api/* {
+        basicauth {
+            admin $2a$14$Zkx19XLiW6VYouLHR5NmfOFU0z2GTNmpkT/5qqR7hx16A0vyNsN8q
+        }
+        reverse_proxy iii:3111
+    }
+    
+    # No auth for WebSocket (implement custom auth in worker)
+    handle /ws {
+        reverse_proxy iii:49134
+    }
+}
+```
+
+**Caddy with JWT:**
+
+```caddy
+your-domain.com {
+    handle /api/* {
+        jwt {
+            secret your-secret-key
+        }
+        reverse_proxy iii:3111
+    }
+}
+```
+
+## Network Security
+
+### Port Exposure
+
+**Public-facing ports:**
+- **443** (HTTPS) - Caddy/reverse proxy only
+- **80** (HTTP) - Redirect to HTTPS
+
+**Internal ports (not exposed):**
+- **3111** - HTTP API (behind proxy)
+- **49134** - WebSocket (behind proxy)
+- **3112** - Stream API (behind proxy)
+- **9464** - Prometheus metrics (internal only)
+
+**Docker configuration:**
+
+```yaml
+services:
+  iii:
+    # Use 'expose' instead of 'ports' for internal-only access
+    expose:
+      - "3111"
+      - "49134"
+      - "3112"
+    
+    # Only expose metrics to internal network
+    ports:
+      - "127.0.0.1:9464:9464"  # Bind to localhost only
+```
+
+### Firewall Rules
+
+Configure firewall to restrict access:
+
+```bash
+# Allow HTTPS only
+sudo ufw allow 443/tcp
+
+# Allow HTTP for Let's Encrypt challenges
+sudo ufw allow 80/tcp
+
+# Deny direct access to iii ports
+sudo ufw deny 3111/tcp
+sudo ufw deny 49134/tcp
+sudo ufw deny 3112/tcp
+sudo ufw deny 9464/tcp
+```
+
+### Network Isolation
+
+Use Docker networks for service isolation:
+
+```yaml
+services:
+  caddy:
+    networks:
+      - public
+      - internal
+  
+  iii:
+    networks:
+      - internal
+  
+  redis:
+    networks:
+      - internal
+
+networks:
+  public:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true  # No external access
+```
+
+## Secrets Management
+
+### Environment Variables
+
+Use Docker secrets or external secret managers:
+
+**Docker Swarm Secrets:**
+
+```yaml
+services:
+  iii:
+    secrets:
+      - redis_password
+      - api_token
+    environment:
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      API_TOKEN_FILE: /run/secrets/api_token
+
+secrets:
+  redis_password:
+    external: true
+  api_token:
+    external: true
+```
+
+**Kubernetes Secrets:**
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: iii-secrets
+type: Opaque
+data:
+  redis-password: <base64-encoded>
+  api-token: <base64-encoded>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iii
+spec:
+  template:
+    spec:
+      containers:
+      - name: iii
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: iii-secrets
+              key: redis-password
+```
+
+### Vault Integration
+
+Integrate with HashiCorp Vault:
+
+```bash
+# Fetch secrets from Vault
+export REDIS_PASSWORD=$(vault kv get -field=password secret/iii/redis)
+export API_TOKEN=$(vault kv get -field=token secret/iii/api)
+
+docker run \
+  -e REDIS_PASSWORD \
+  -e API_TOKEN \
+  iiidev/iii:latest
+```
+
+## Configuration Security
+
+### Environment Variable Expansion
+
+iii supports environment variable expansion in config files:
+
+```yaml
+modules:
+  - class: modules::queue::QueueModule
+    config:
+      adapter:
+        class: modules::queue::adapters::RedisQueueAdapter
+        config:
+          # Use default if env var not set
+          url: ${REDIS_URL:redis://localhost:6379}
+          
+          # Required env var (no default)
+          password: ${REDIS_PASSWORD}
+```
+
+### Read-Only Configuration
+
+Mount configuration as read-only:
+
+```bash
+docker run -v ./config.yaml:/app/config.yaml:ro iiidev/iii:latest
+```
+
+### Sensitive Data Filtering
+
+iii automatically redacts sensitive fields in logs:
+
+- Passwords
+- API keys
+- Tokens
+- Connection strings
+
+## Monitoring Security
+
+### Secure Metrics Endpoint
+
+Restrict Prometheus metrics access:
+
+**Caddy with IP allowlist:**
+
+```caddy
+:9464 {
+    @allowed {
+        remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+    }
+    
+    handle @allowed {
+        reverse_proxy iii:9464
+    }
+    
+    handle {
+        respond "Forbidden" 403
+    }
+}
+```
+
+**Prometheus with basic auth:**
+
+```yaml
+scrape_configs:
+  - job_name: 'iii'
+    static_configs:
+      - targets: ['iii:9464']
+    basic_auth:
+      username: prometheus
+      password: ${PROMETHEUS_PASSWORD}
+```
+
+### Audit Logging
+
+Enable audit logging for security events:
+
+```yaml
+modules:
+  - class: modules::observability::LoggingModule
+    config:
+      level: info
+      format: json
+      audit:
+        enabled: true
+        events:
+          - function_registration
+          - trigger_registration
+          - authentication_failure
+```
+
+## Resource Limits
+
+### Docker Resource Constraints
+
+```yaml
+services:
+  iii:
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+```
+
+### Rate Limiting
+
+Implement rate limiting at the reverse proxy:
+
+```caddy
+your-domain.com {
+    rate_limit {
+        zone api_zone {
+            key {remote_host}
+            events 100
+            window 1m
+        }
+    }
+    
+    handle /api/* {
+        rate_limit api_zone
+        reverse_proxy iii:3111
+    }
+}
+```
+
+## Incident Response
+
+### Security Monitoring
+
+Monitor for security events:
+
+```yaml
+alerts:
+  - name: authentication_failures
+    metric: auth.failures
+    threshold: 10
+    operator: ">"
+    window_seconds: 60
+    action:
+      type: webhook
+      url: https://security-team.slack.com/webhook
+  
+  - name: unusual_function_registration
+    metric: functions.registered
+    threshold: 50
+    operator: ">"
+    window_seconds: 300
+    action:
+      type: function
+      path: security.alert
+```
+
+### Log Retention
+
+Configure appropriate log retention:
+
+```yaml
+logs_retention_seconds: 604800  # 7 days
+logs_max_count: 100000
+```
+
+Export logs to external SIEM:
+
+```yaml
+logs_exporter: otlp
+endpoint: https://siem.example.com:4317
+```
+
+## Compliance
+
+### Data Encryption
+
+- **In transit**: TLS 1.3 for all network communication
+- **At rest**: Use encrypted volumes for persistent data
+
+```yaml
+volumes:
+  redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,encryption=aes-256-gcm
+      device: /mnt/encrypted/redis
+```
+
+### Data Retention
+
+Configure retention policies:
+
+```yaml
+metrics_retention_seconds: 2592000  # 30 days
+logs_retention_seconds: 604800      # 7 days
+traces_retention_seconds: 604800    # 7 days
+```
+
+### Access Control
+
+Implement least-privilege access:
+
+- Separate service accounts for each component
+- Use RBAC for Kubernetes deployments
+- Implement network policies
+- Regular access reviews
+
+## Security Checklist
+
+- [ ] Use TLS for all external communication
+- [ ] Run containers as non-root user
+- [ ] Use read-only root filesystem
+- [ ] Drop all unnecessary capabilities
+- [ ] Implement authentication on all APIs
+- [ ] Use environment variables for secrets
+- [ ] Enable security audit logging
+- [ ] Configure resource limits
+- [ ] Implement rate limiting
+- [ ] Restrict network access with firewall
+- [ ] Use private Docker networks
+- [ ] Mount configs as read-only
+- [ ] Enable security monitoring alerts
+- [ ] Regular security updates
+- [ ] Backup encryption keys
+- [ ] Document incident response plan
+
+## References
+
+- Dockerfile: `Dockerfile`
+- Caddy configuration: `Caddyfile`
+- Authentication: `src/invocation/auth.rs`
+- Security options: [Docker security](https://docs.docker.com/engine/security/)
+- TLS setup: [Caddy documentation](https://caddyserver.com/docs/)

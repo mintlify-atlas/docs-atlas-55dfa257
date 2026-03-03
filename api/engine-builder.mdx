@@ -1,0 +1,347 @@
+---
+title: "EngineBuilder"
+description: "Builder pattern for configuring and starting the iii Engine"
+---
+
+`EngineBuilder` provides a fluent API for configuring, building, and running the iii framework engine. It handles module registration, initialization, and server lifecycle.
+
+## Constructor
+
+### `EngineBuilder::new()`
+
+Creates a new `EngineBuilder` with default settings.
+
+```rust
+pub fn new() -> Self
+```
+
+**Returns**: A new `EngineBuilder` instance with:
+- Default module registry (from inventory)
+- Address set to `0.0.0.0:49134`
+- Empty module list
+
+**Example**:
+
+```rust
+use iii::EngineBuilder;
+
+let builder = EngineBuilder::new();
+```
+
+## Configuration Methods
+
+### `address()`
+
+Sets the server address and port.
+
+```rust
+pub fn address(mut self, addr: &str) -> Self
+```
+
+<ParamField path="addr" type="&str" required>
+  Server address in format `host:port` (e.g., `"0.0.0.0:3000"`)
+</ParamField>
+
+**Example**:
+
+```rust
+EngineBuilder::new()
+    .address("0.0.0.0:3000")
+```
+
+### `config_file_or_default()`
+
+Loads configuration from a YAML file if it exists, otherwise uses default modules.
+
+```rust
+pub fn config_file_or_default(mut self, path: &str) -> anyhow::Result<Self>
+```
+
+<ParamField path="path" type="&str" required>
+  Path to YAML configuration file (e.g., `"config.yaml"`)
+</ParamField>
+
+**Returns**: `Result<Self>` - Updated builder or error if config parsing fails
+
+**Behavior**:
+- If file exists: Parses YAML and loads modules from config
+- If file missing: Uses default modules registered via inventory
+- Supports environment variable expansion (see [Configuration](/api/configuration))
+
+**Example**:
+
+```rust src/main.rs
+EngineBuilder::new()
+    .config_file_or_default(&args.config)? // Load from file or defaults
+    .address(format!("0.0.0.0:{}", port).as_str())
+    .build()
+    .await?
+```
+
+### `register_module()`
+
+Registers a custom module type that can be instantiated by class name.
+
+```rust
+pub fn register_module<M: Module + 'static>(self, class: &str) -> Self
+```
+
+<ParamField path="class" type="&str" required>
+  Fully qualified class name for the module (e.g., `"my::CustomModule"`)
+</ParamField>
+
+<ParamField path="M" type="Module" required>
+  Type implementing the `Module` trait
+</ParamField>
+
+**Example**:
+
+```rust
+use iii::{EngineBuilder, Module};
+
+struct MyCustomModule;
+
+impl Module for MyCustomModule {
+    // ... implementation
+}
+
+EngineBuilder::new()
+    .register_module::<MyCustomModule>("my::CustomModule")
+    .add_module("my::CustomModule", None)
+```
+
+### `add_module()`
+
+Adds a module instance to be loaded at runtime.
+
+```rust
+pub fn add_module(mut self, class: &str, config: Option<Value>) -> Self
+```
+
+<ParamField path="class" type="&str" required>
+  Module class name (must be registered in the registry)
+</ParamField>
+
+<ParamField path="config" type="Option<Value>" default="None">
+  Optional JSON configuration passed to the module's `create()` method
+</ParamField>
+
+**Example**:
+
+```rust
+use serde_json::json;
+
+EngineBuilder::new()
+    .add_module("my::CustomModule", Some(json!({
+        "key": "value",
+        "timeout": 30
+    })))
+```
+
+## Build and Execution
+
+### `build()`
+
+Builds and initializes all configured modules.
+
+```rust
+pub async fn build(mut self) -> anyhow::Result<Self>
+```
+
+**Returns**: `Result<Self>` - Builder with initialized modules or error
+
+**Process**:
+1. Ensures default metrics are available
+2. Adds mandatory modules if not present
+3. Creates all module instances via registry
+4. Calls `initialize()` on each module
+5. Registers module functions with the engine
+
+**Example**:
+
+```rust src/main.rs
+let engine = EngineBuilder::new()
+    .config_file_or_default(&args.config)?
+    .address(format!("0.0.0.0:{}", port).as_str())
+    .build()  // Initialize all modules
+    .await?
+```
+
+<Warning>
+  You must call `build()` before `serve()`. The builder will panic if you call `serve()` without building first.
+</Warning>
+
+### `serve()`
+
+Starts the WebSocket server and begins serving requests.
+
+```rust
+pub async fn serve(self) -> anyhow::Result<()>
+```
+
+**Returns**: `Result<()>` - Blocks until shutdown signal received
+
+**Behavior**:
+1. Starts background tasks for all modules
+2. Starts channel TTL sweep task
+3. Sets up WebSocket routes:
+   - `/` - Main worker connections
+   - `/ws/channels/{channel_id}` - Channel-specific connections
+4. Binds TCP listener and starts serving
+5. Waits for shutdown signal (SIGTERM, SIGINT, or Ctrl+C)
+6. Calls `destroy()` on all modules for cleanup
+
+**Example**:
+
+```rust src/main.rs
+EngineBuilder::new()
+    .config_file_or_default(&args.config)?
+    .address(format!("0.0.0.0:{}", port).as_str())
+    .build()
+    .await?
+    .serve()  // Blocks until shutdown
+    .await?
+```
+
+### `destroy()`
+
+Cleans up and destroys all modules. Called automatically by `serve()`.
+
+```rust
+pub async fn destroy(self) -> anyhow::Result<()>
+```
+
+**Returns**: `Result<()>` - Success or first error encountered
+
+## Complete Examples
+
+### Basic Usage
+
+```rust src/main.rs
+use iii::{EngineBuilder, logging};
+use iii::modules::config::{DEFAULT_PORT, EngineConfig};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    logging::init_log("config.yaml");
+
+    let config = EngineConfig::config_file_or_default("config.yaml")?;
+    let port = if config.port == 0 {
+        DEFAULT_PORT
+    } else {
+        config.port
+    };
+
+    EngineBuilder::new()
+        .config_file_or_default("config.yaml")?
+        .address(format!("0.0.0.0:{}", port).as_str())
+        .build()
+        .await?
+        .serve()
+        .await?;
+    Ok(())
+}
+```
+
+### Custom Module Registration
+
+```rust
+use iii::{EngineBuilder, Module};
+use serde_json::json;
+
+struct MyCustomModule;
+
+impl Module for MyCustomModule {
+    async fn create(
+        engine: Arc<Engine>,
+        config: Option<Value>,
+    ) -> anyhow::Result<Box<dyn Module>> {
+        // Custom initialization
+        Ok(Box::new(Self))
+    }
+    
+    // ... other trait methods
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    EngineBuilder::new()
+        .register_module::<MyCustomModule>("my::CustomModule")
+        .add_module("my::CustomModule", Some(json!({
+            "key": "value"
+        })))
+        .build()
+        .await?
+        .serve()
+        .await?;
+    Ok(())
+}
+```
+
+### Programmatic Configuration
+
+```rust
+use iii::EngineBuilder;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    EngineBuilder::new()
+        .address("0.0.0.0:8080")
+        .add_module("modules::api::RestApiModule", Some(json!({
+            "port": 3111,
+            "host": "127.0.0.1"
+        })))
+        .add_module("modules::queue::QueueModule", Some(json!({
+            "adapter": {
+                "class": "modules::queue::RedisAdapter",
+                "config": {
+                    "redis_url": "redis://localhost:6379"
+                }
+            }
+        })))
+        .build()
+        .await?
+        .serve()
+        .await?;
+    Ok(())
+}
+```
+
+## Type Information
+
+### Module Trait Bound
+
+Modules registered with `register_module()` must implement:
+
+```rust
+pub trait Module: Send + Sync {
+    async fn create(
+        engine: Arc<Engine>,
+        config: Option<Value>,
+    ) -> anyhow::Result<Box<dyn Module>>;
+    
+    async fn initialize(&self) -> anyhow::Result<()>;
+    fn register_functions(&self, engine: Arc<Engine>);
+    async fn destroy(&self) -> anyhow::Result<()>;
+    fn name(&self) -> &str;
+    // ... other methods
+}
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/api/configuration">
+    Learn about EngineConfig and YAML structure
+  </Card>
+  <Card title="Module Trait" icon="puzzle-piece" href="/api/traits/module">
+    Module trait reference
+  </Card>
+  <Card title="Custom Modules" icon="code" href="/modules/custom-modules">
+    Build your own modules
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/deployment/configuration">
+    Production configuration guide
+  </Card>
+</CardGroup>

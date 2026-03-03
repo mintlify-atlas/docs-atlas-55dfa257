@@ -1,0 +1,199 @@
+---
+title: RegisterFunction
+description: Register a function with the iii framework
+---
+
+## Request
+
+Register a function that can be invoked by the framework or external triggers.
+
+<ParamField name="type" type="string" required>
+  Message type. Must be `"registerfunction"`.
+</ParamField>
+
+<ParamField name="id" type="string" required>
+  Unique identifier for the function. Used to invoke or unregister the function.
+</ParamField>
+
+<ParamField name="description" type="string">
+  Human-readable description of what the function does.
+</ParamField>
+
+<ParamField name="request_format" type="object">
+  JSON Schema describing the expected input format for function invocations.
+</ParamField>
+
+<ParamField name="response_format" type="object">
+  JSON Schema describing the output format returned by the function.
+</ParamField>
+
+<ParamField name="metadata" type="object">
+  Arbitrary metadata associated with the function.
+</ParamField>
+
+<ParamField name="invocation" type="object">
+  Configuration for HTTP-based function invocation. If provided, the framework will invoke the function via HTTP instead of WebSocket.
+  
+  <Expandable title="properties">
+    <ParamField name="url" type="string" required>
+      The HTTP endpoint URL to invoke.
+    </ParamField>
+    
+    <ParamField name="method" type="string" default="POST">
+      HTTP method to use. One of: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`.
+    </ParamField>
+    
+    <ParamField name="timeout_ms" type="number">
+      Request timeout in milliseconds.
+    </ParamField>
+    
+    <ParamField name="headers" type="object">
+      Additional HTTP headers to include in the request. Key-value pairs of header names and values.
+    </ParamField>
+    
+    <ParamField name="auth" type="object">
+      Authentication configuration. The framework resolves credentials from environment variables.
+      
+      <Expandable title="HMAC Authentication">
+        <ParamField name="type" type="string" required>
+          Must be `"hmac"`.
+        </ParamField>
+        
+        <ParamField name="secret_key" type="string" required>
+          Name of the environment variable containing the HMAC secret.
+        </ParamField>
+      </Expandable>
+      
+      <Expandable title="Bearer Token Authentication">
+        <ParamField name="type" type="string" required>
+          Must be `"bearer"`.
+        </ParamField>
+        
+        <ParamField name="token_key" type="string" required>
+          Name of the environment variable containing the bearer token.
+        </ParamField>
+      </Expandable>
+      
+      <Expandable title="API Key Authentication">
+        <ParamField name="type" type="string" required>
+          Must be `"api_key"`.
+        </ParamField>
+        
+        <ParamField name="header" type="string" required>
+          HTTP header name for the API key (e.g., `"X-API-Key"`).
+        </ParamField>
+        
+        <ParamField name="value_key" type="string" required>
+          Name of the environment variable containing the API key value.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Examples
+
+### Basic Function Registration
+
+```json
+{
+  "type": "registerfunction",
+  "id": "process_payment",
+  "description": "Process a payment transaction",
+  "request_format": {
+    "type": "object",
+    "properties": {
+      "amount": { "type": "number" },
+      "currency": { "type": "string" }
+    },
+    "required": ["amount", "currency"]
+  },
+  "response_format": {
+    "type": "object",
+    "properties": {
+      "transaction_id": { "type": "string" },
+      "status": { "type": "string" }
+    }
+  }
+}
+```
+
+### Function with HTTP Invocation and Bearer Auth
+
+```json
+{
+  "type": "registerfunction",
+  "id": "external.my_lambda",
+  "description": "External Lambda function",
+  "invocation": {
+    "url": "https://example.com/lambda",
+    "method": "POST",
+    "timeout_ms": 30000,
+    "headers": {
+      "x-custom-header": "value"
+    },
+    "auth": {
+      "type": "bearer",
+      "token_key": "LAMBDA_TOKEN"
+    }
+  }
+}
+```
+
+### Function with HMAC Authentication
+
+```json
+{
+  "type": "registerfunction",
+  "id": "webhook.handler",
+  "invocation": {
+    "url": "https://api.example.com/webhook",
+    "auth": {
+      "type": "hmac",
+      "secret_key": "WEBHOOK_SECRET"
+    }
+  }
+}
+```
+
+### Function with API Key Authentication
+
+```json
+{
+  "type": "registerfunction",
+  "id": "external.api",
+  "invocation": {
+    "url": "https://api.example.com/endpoint",
+    "auth": {
+      "type": "api_key",
+      "header": "X-API-Key",
+      "value_key": "API_KEY_ENV_VAR"
+    }
+  }
+}
+```
+
+## Error Cases
+
+### Missing Environment Variable
+
+If an authentication configuration references an environment variable that doesn't exist:
+
+```json
+{
+  "code": "missing_env_var",
+  "message": "Missing environment variable 'LAMBDA_TOKEN' for Bearer token authentication. Please set this environment variable before registering the function."
+}
+```
+
+### Duplicate Function ID
+
+Attempting to register a function with an ID that's already registered will fail. Unregister the existing function first or use a different ID.
+
+## Notes
+
+- Function IDs must be unique within a worker session
+- Optional fields are omitted from serialization when not provided
+- For WebSocket-based functions (no `invocation`), the worker must handle `InvokeFunction` messages
+- For HTTP-based functions, the framework will make HTTP requests to the specified endpoint
+- Authentication credentials are resolved from environment variables at registration time

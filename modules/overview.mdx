@@ -1,0 +1,127 @@
+---
+title: "Modules Overview"
+description: "Understanding the modular architecture of iii framework"
+---
+
+Modules are the core building blocks of the iii framework. Each module provides specific functionality and can be configured independently through the `config.yaml` file.
+
+## Architecture
+
+The iii framework uses a **modular architecture** where each module:
+
+- Implements the `Module` trait
+- Can use different **adapters** for storage/communication backends
+- Registers functions and triggers with the engine
+- Runs independently with isolated configuration
+
+## Available Modules
+
+### Core Modules
+
+These modules are enabled by default and provide essential functionality:
+
+<CardGroup cols={2}>
+  <Card title="HTTP" icon="globe" href="/modules/http">
+    Expose functions as HTTP/REST endpoints
+  </Card>
+  <Card title="Queue" icon="list" href="/modules/queue">
+    Asynchronous message queue with pub/sub
+  </Card>
+  <Card title="Cron" icon="clock" href="/modules/cron">
+    Schedule functions with cron expressions
+  </Card>
+  <Card title="Stream" icon="wave-pulse" href="/modules/stream">
+    Real-time WebSocket data streams
+  </Card>
+  <Card title="State" icon="database" href="/modules/state">
+    Persistent key-value state management
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/modules/observability">
+    OpenTelemetry traces, metrics, and logs
+  </Card>
+</CardGroup>
+
+## Module Configuration
+
+Modules are configured in `config.yaml` under the `modules` section:
+
+```yaml config.yaml
+modules:
+  - class: modules::api::RestApiModule
+    config:
+      port: 3111
+      host: 127.0.0.1
+      
+  - class: modules::queue::QueueModule
+    config:
+      adapter:
+        class: modules::queue::RedisAdapter
+        config:
+          redis_url: redis://localhost:6379
+```
+
+## Adapter Pattern
+
+Most modules support **pluggable adapters** for different backends:
+
+```yaml
+modules:
+  - class: modules::stream::StreamModule
+    config:
+      adapter:
+        class: modules::stream::adapters::RedisAdapter  # Redis backend
+        config:
+          redis_url: redis://localhost:6379
+```
+
+Common adapter options:
+- **KvStore** - File-based or in-memory storage (default)
+- **RedisAdapter** - Redis backend for distributed systems
+- **Custom** - Implement your own adapter
+
+## Module Lifecycle
+
+1. **Create** - Module is instantiated with configuration
+2. **Initialize** - Registers functions and triggers
+3. **Start** - Background tasks begin (optional)
+4. **Destroy** - Cleanup on shutdown
+
+## Common Patterns
+
+### Triggers
+
+Modules register trigger types that invoke functions based on events:
+
+```typescript
+export default iii({
+  triggers: {
+    'on-user-create': {
+      type: 'queue',
+      config: { topic: 'users.created' },
+    },
+  },
+});
+```
+
+### Functions
+
+Modules expose functions callable via SDK or other modules:
+
+```typescript
+// Queue module function
+await client.call('queue.enqueue', {
+  topic: 'notifications',
+  data: { userId: 123 },
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="HTTP Module" icon="globe" href="/modules/http">
+    Learn about REST API endpoints
+  </Card>
+  <Card title="Custom Modules" icon="code" href="/modules/custom-modules">
+    Build your own modules
+  </Card>
+</CardGroup>

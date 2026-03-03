@@ -1,0 +1,356 @@
+---
+title: "Cron Module"
+description: "Schedule functions with cron expressions"
+---
+
+The Cron module enables scheduled execution of functions using cron expressions. Perfect for periodic tasks like cleanup jobs, reports, and background processing.
+
+## Configuration
+
+Configure the Cron module in `config.yaml`:
+
+```yaml config.yaml
+modules:
+  - class: modules::cron::CronModule
+    config:
+      adapter:
+        class: modules::cron::KvCronAdapter
+```
+
+## Available Adapters
+
+<Tabs>
+  <Tab title="KvCronAdapter (Default)">
+    File-based or in-memory storage:
+    
+    ```yaml
+    adapter:
+      class: modules::cron::KvCronAdapter
+    ```
+  </Tab>
+  
+  <Tab title="Redis">
+    Distributed cron using Redis:
+    
+    ```yaml
+    adapter:
+      class: modules::cron::RedisAdapter
+      config:
+        redis_url: redis://localhost:6379
+    ```
+  </Tab>
+</Tabs>
+
+## Creating Scheduled Functions
+
+Define cron triggers with standard cron expressions:
+
+```typescript index.ts
+export default iii({
+  triggers: {
+    'daily-cleanup': {
+      type: 'cron',
+      config: {
+        expression: '0 0 * * *',  // Every day at midnight
+      },
+    },
+    'hourly-sync': {
+      type: 'cron',
+      config: {
+        expression: '0 * * * *',  // Every hour
+      },
+    },
+    'every-5-minutes': {
+      type: 'cron',
+      config: {
+        expression: '*/5 * * * *',  // Every 5 minutes
+      },
+    },
+  },
+});
+
+export async function dailyCleanup() {
+  console.log('Running daily cleanup');
+  await cleanupOldData();
+}
+
+export async function hourlySync() {
+  console.log('Syncing data');
+  await syncWithExternalAPI();
+}
+
+export async function every5Minutes() {
+  console.log('Health check');
+  await performHealthCheck();
+}
+```
+
+## Cron Expression Format
+
+Cron expressions use the standard 5-field format:
+
+```
+┌───────────── minute (0 - 59)
+│ ┌───────────── hour (0 - 23)
+│ │ ┌───────────── day of month (1 - 31)
+│ │ │ ┌───────────── month (1 - 12)
+│ │ │ │ ┌───────────── day of week (0 - 6) (Sunday = 0)
+│ │ │ │ │
+* * * * *
+```
+
+## Common Cron Patterns
+
+<CodeGroup>
+```yaml Every Minute
+expression: '* * * * *'
+```
+
+```yaml Every Hour
+expression: '0 * * * *'
+```
+
+```yaml Every Day at Midnight
+expression: '0 0 * * *'
+```
+
+```yaml Every Week (Sunday)
+expression: '0 0 * * 0'
+```
+
+```yaml Every Month (1st day)
+expression: '0 0 1 * *'
+```
+
+```yaml Business Hours (9 AM - 5 PM)
+expression: '0 9-17 * * 1-5'
+```
+
+```yaml Every 15 Minutes
+expression: '*/15 * * * *'
+```
+
+```yaml Every 6 Hours
+expression: '0 */6 * * *'
+```
+</CodeGroup>
+
+## Input Format
+
+Cron-triggered functions receive timing information:
+
+```typescript
+export async function scheduledTask(input: any) {
+  console.log('Execution time:', input.timestamp);
+  console.log('Cron expression:', input.expression);
+  
+  // Your scheduled logic here
+}
+```
+
+Input structure:
+```typescript
+{
+  timestamp: number;    // Unix timestamp of execution
+  expression: string;   // Cron expression that triggered this
+}
+```
+
+## Conditional Execution
+
+Use conditions to control whether a scheduled task should run:
+
+```typescript
+export default iii({
+  triggers: {
+    'weekday-report': {
+      type: 'cron',
+      config: {
+        expression: '0 9 * * *',  // Every day at 9 AM
+      },
+      condition: async (input) => {
+        const day = new Date().getDay();
+        return day >= 1 && day <= 5; // Monday-Friday only
+      },
+    },
+  },
+});
+```
+
+## Example Use Cases
+
+### Daily Database Cleanup
+
+```typescript
+export default iii({
+  triggers: {
+    'cleanup-old-logs': {
+      type: 'cron',
+      config: {
+        expression: '0 2 * * *',  // 2 AM daily
+      },
+    },
+  },
+});
+
+export async function cleanupOldLogs() {
+  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  
+  // Delete logs older than 30 days
+  const logs = await state.list({ scope: 'logs' });
+  for (const [key, log] of Object.entries(logs)) {
+    if (log.timestamp < thirtyDaysAgo) {
+      await state.delete({ scope: 'logs', key });
+    }
+  }
+  
+  console.log('Old logs cleaned up');
+}
+```
+
+### Hourly Data Sync
+
+```typescript
+export default iii({
+  triggers: {
+    'sync-external-data': {
+      type: 'cron',
+      config: {
+        expression: '0 * * * *',  // Every hour
+      },
+    },
+  },
+});
+
+export async function syncExternalData() {
+  // Fetch data from external API
+  const response = await fetch('https://api.example.com/data');
+  const data = await response.json();
+  
+  // Store in state
+  await state.set({
+    scope: 'cache',
+    key: 'external_data',
+    value: data,
+  });
+  
+  console.log('Data synced successfully');
+}
+```
+
+### Weekly Reports
+
+```typescript
+export default iii({
+  triggers: {
+    'weekly-report': {
+      type: 'cron',
+      config: {
+        expression: '0 9 * * 1',  // Every Monday at 9 AM
+      },
+    },
+  },
+});
+
+export async function weeklyReport() {
+  // Generate report for last week
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - 7);
+  
+  const metrics = await collectMetrics(startDate);
+  const report = generateReport(metrics);
+  
+  // Send report via email
+  await queue.enqueue({
+    topic: 'emails.send',
+    data: {
+      to: 'team@example.com',
+      subject: 'Weekly Report',
+      body: report,
+    },
+  });
+}
+```
+
+### Periodic Health Checks
+
+```typescript
+export default iii({
+  triggers: {
+    'health-check': {
+      type: 'cron',
+      config: {
+        expression: '*/5 * * * *',  // Every 5 minutes
+      },
+    },
+  },
+});
+
+export async function healthCheck() {
+  const checks = [
+    { name: 'Database', url: 'http://db:5432/health' },
+    { name: 'Redis', url: 'http://redis:6379/ping' },
+    { name: 'API', url: 'http://api:3000/health' },
+  ];
+  
+  for (const check of checks) {
+    try {
+      const response = await fetch(check.url);
+      if (!response.ok) {
+        await queue.enqueue({
+          topic: 'alerts',
+          data: { service: check.name, status: 'unhealthy' },
+        });
+      }
+    } catch (error) {
+      console.error(`${check.name} health check failed:`, error);
+    }
+  }
+}
+```
+
+## Timezone Considerations
+
+<Warning>
+Cron expressions run in the server's timezone. For UTC-based scheduling, ensure your server timezone is set to UTC or convert times accordingly.
+</Warning>
+
+Example for timezone-aware scheduling:
+
+```typescript
+export async function scheduledTask() {
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  
+  // Only run during specific UTC hours
+  if (utcHour >= 9 && utcHour <= 17) {
+    await performTask();
+  }
+}
+```
+
+## Best Practices
+
+1. **Idempotent Functions**: Make sure cron functions can safely run multiple times
+2. **Error Handling**: Always handle errors gracefully
+3. **Monitoring**: Log execution times and results
+4. **Avoid Overlaps**: Ensure tasks complete before next scheduled run
+5. **Use Conditions**: Filter execution based on business rules
+
+## Debugging Cron Jobs
+
+View registered cron jobs in logs:
+
+```bash
+# Check logs for cron registration
+grep "REGISTERED.*cron" logs/iii.log
+
+# Example output:
+# [REGISTERED] Cron trigger daily-cleanup (0 0 * * *) → cleanup.run
+```
+
+## Source Code Reference
+
+- Module: `src/modules/cron/cron.rs:29`
+- Trigger registration: `src/modules/cron/cron.rs:88`
+- Adapters: `src/modules/cron/adapters/`

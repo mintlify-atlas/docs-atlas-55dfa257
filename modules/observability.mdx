@@ -1,0 +1,481 @@
+---
+title: "Observability Module"
+description: "OpenTelemetry traces, metrics, and logs for monitoring and debugging"
+---
+
+The Observability module (OtelModule) provides comprehensive monitoring through OpenTelemetry-compliant traces, metrics, and logs. Essential for debugging, performance analysis, and production monitoring.
+
+## Configuration
+
+Configure the Observability module in `config.yaml`:
+
+```yaml config.yaml
+modules:
+  - class: modules::observability::OtelModule
+    config:
+      # Core Configuration
+      enabled: true
+      service_name: my-app
+      service_version: 0.1.0
+      service_namespace: production
+      
+      # Trace Exporter
+      exporter: memory  # Options: otlp, memory, both
+      endpoint: http://localhost:4317  # OTLP endpoint
+      
+      # Sampling
+      sampling_ratio: 1.0  # 1.0 = 100% sampling
+      
+      # Memory Storage
+      memory_max_spans: 10000
+      
+      # Metrics
+      metrics_enabled: true
+      metrics_exporter: memory
+      metrics_retention_seconds: 3600
+      metrics_max_count: 10000
+      
+      # Logs
+      logs_enabled: true
+      logs_exporter: memory
+      logs_max_count: 1000
+      logs_retention_seconds: 3600
+      logs_sampling_ratio: 1.0
+      logs_console_output: true
+```
+
+## Configuration Options
+
+### Core Settings
+
+<ParamField path="enabled" type="boolean" default="true">
+  Enable/disable observability module
+</ParamField>
+
+<ParamField path="service_name" type="string" default="iii">
+  Service name for telemetry data
+</ParamField>
+
+<ParamField path="service_version" type="string">
+  Service version identifier
+</ParamField>
+
+<ParamField path="service_namespace" type="string">
+  Service namespace/environment (e.g., production, staging)
+</ParamField>
+
+### Trace Configuration
+
+<ParamField path="exporter" type="string" default="memory">
+  Trace exporter type:
+  - `memory`: Store in-memory (for development/debugging)
+  - `otlp`: Export to OTLP collector
+  - `both`: Both memory and OTLP
+</ParamField>
+
+<ParamField path="endpoint" type="string">
+  OTLP endpoint URL (required when exporter is `otlp` or `both`)
+</ParamField>
+
+<ParamField path="sampling_ratio" type="number" default="1.0">
+  Basic sampling ratio (0.0 to 1.0)
+</ParamField>
+
+### Metrics Configuration
+
+<ParamField path="metrics_enabled" type="boolean" default="true">
+  Enable metrics collection
+</ParamField>
+
+<ParamField path="metrics_exporter" type="string" default="memory">
+  Metrics exporter: `memory`, `otlp`
+</ParamField>
+
+<ParamField path="metrics_retention_seconds" type="number" default="3600">
+  How long to keep metrics in memory (seconds)
+</ParamField>
+
+### Logs Configuration
+
+<ParamField path="logs_enabled" type="boolean" default="true">
+  Enable log collection
+</ParamField>
+
+<ParamField path="logs_exporter" type="string" default="memory">
+  Logs exporter: `memory`, `otlp`, `both`
+</ParamField>
+
+<ParamField path="logs_sampling_ratio" type="number" default="1.0">
+  Log sampling ratio (0.0 to 1.0)
+</ParamField>
+
+<ParamField path="logs_console_output" type="boolean" default="true">
+  Output logs to console
+</ParamField>
+
+## Logging Functions
+
+Use built-in logging functions for structured logs:
+
+```typescript
+// Info level
+await client.call('engine::log::info', {
+  message: 'User logged in',
+  data: { userId: 123, ip: '192.168.1.1' },
+});
+
+// Warning level
+await client.call('engine::log::warn', {
+  message: 'Rate limit approaching',
+  data: { current: 95, limit: 100 },
+});
+
+// Error level
+await client.call('engine::log::error', {
+  message: 'Payment failed',
+  data: { orderId: 456, error: 'Card declined' },
+});
+
+// Debug level
+await client.call('engine::log::debug', {
+  message: 'Cache miss',
+  data: { key: 'user_123' },
+});
+
+// Trace level
+await client.call('engine::log::trace', {
+  message: 'Database query',
+  data: { query: 'SELECT * FROM users' },
+});
+```
+
+### Log Input Format
+
+```typescript
+{
+  trace_id?: string;      // Optional: link to trace
+  span_id?: string;       // Optional: link to span
+  message: string;        // Log message
+  data?: object;          // Structured data
+  service_name?: string;  // Override service name
+}
+```
+
+## Traces
+
+All function invocations are automatically traced. Access traces via functions:
+
+### List Traces
+
+```typescript
+const traces = await client.call('engine::traces::list', {
+  offset: 0,
+  limit: 100,
+  service_name: 'my-app',        // Filter by service
+  name: 'api.users',             // Filter by span name
+  status: 'error',               // Filter by status
+  min_duration_ms: 100,          // Min duration
+  max_duration_ms: 5000,         // Max duration
+  start_time: 1234567890000,     // Start timestamp (ms)
+  end_time: 1234567890000,       // End timestamp (ms)
+  sort_by: 'duration',           // Sort: duration, start_time, name
+  sort_order: 'desc',            // asc or desc
+  include_internal: false,       // Include engine.* functions
+});
+```
+
+### Get Trace Tree
+
+```typescript
+const tree = await client.call('engine::traces::tree', {
+  trace_id: 'abc123...',
+});
+
+// Returns hierarchical trace structure
+```
+
+### Clear Traces
+
+```typescript
+await client.call('engine::traces::clear', {});
+```
+
+## Metrics
+
+Access collected metrics:
+
+```typescript
+const metrics = await client.call('engine::metrics::list', {
+  start_time: Date.now() - 3600000,  // Last hour
+  end_time: Date.now(),
+  metric_name: 'iii.invocations.total',  // Optional filter
+  aggregate_interval: 60,  // Aggregate by 60 seconds
+});
+
+// Returns:
+// {
+//   engine_metrics: {
+//     invocations: { total, success, error, deferred, by_function },
+//     workers: { spawns, deaths, active },
+//     performance: { avg_duration_ms, p50, p95, p99, min, max }
+//   },
+//   sdk_metrics: [...],
+//   aggregated_metrics: [...],  // If aggregate_interval specified
+//   timestamp: 1234567890
+// }
+```
+
+### Built-in Metrics
+
+- **iii.invocations.total** - Total function invocations
+- **iii.invocations.success** - Successful invocations
+- **iii.invocations.error** - Failed invocations
+- **iii.invocations.deferred** - Deferred invocations
+- **iii.workers.spawns** - Worker spawn count
+- **iii.workers.deaths** - Worker death count
+- **iii.workers.active** - Active workers
+
+## Logs
+
+Query stored logs:
+
+```typescript
+const logs = await client.call('engine::logs::list', {
+  start_time: Date.now() - 3600000,
+  end_time: Date.now(),
+  trace_id: 'abc123',           // Filter by trace
+  span_id: 'xyz789',            // Filter by span
+  severity_min: 13,             // Min severity (13 = WARN)
+  severity_text: 'ERROR',       // Filter by level
+  offset: 0,
+  limit: 100,
+});
+```
+
+### Clear Logs
+
+```typescript
+await client.call('engine::logs::clear', {});
+```
+
+## Log Triggers
+
+React to log events:
+
+```typescript index.ts
+export default iii({
+  triggers: {
+    'on-error-log': {
+      type: 'log',
+      config: {
+        level: 'error',  // Options: all, error, warn, info, debug, trace
+      },
+    },
+  },
+});
+
+export async function onErrorLog(log: any) {
+  console.log('Error logged:', log.body);
+  console.log('Severity:', log.severity_text);
+  console.log('Data:', log.attributes);
+  
+  // Send alert
+  if (log.severity_number >= 17) { // ERROR or higher
+    await sendAlert({
+      message: log.body,
+      service: log.service_name,
+      trace_id: log.trace_id,
+    });
+  }
+}
+```
+
+## Advanced Sampling
+
+Configure rule-based sampling:
+
+```yaml config.yaml
+modules:
+  - class: modules::observability::OtelModule
+    config:
+      sampling:
+        default: 0.1  # 10% default
+        parent_based: true  # Respect parent sampling decisions
+        
+        rules:
+          # Sample 100% of critical operations
+          - operation: "api.critical.*"
+            rate: 1.0
+          
+          # Sample 1% of health checks
+          - operation: "health.*"
+            rate: 0.01
+          
+          # Sample 80% of production API calls
+          - operation: "api.*"
+            service: "production-*"
+            rate: 0.8
+          
+          # Sample 10% of development
+          - service: "development-*"
+            rate: 0.1
+        
+        # Rate limiting
+        rate_limit:
+          max_traces_per_second: 100
+```
+
+## Alerts
+
+Configure metric-based alerts:
+
+```yaml config.yaml
+modules:
+  - class: modules::observability::OtelModule
+    config:
+      alerts:
+        - name: high_error_rate
+          metric: iii.invocations.error
+          threshold: 100
+          operator: ">"  # >, >=, <, <=, ==, !=
+          window_seconds: 60
+          cooldown_seconds: 300
+          action: webhook
+          webhook_url: https://hooks.slack.com/services/xxx
+        
+        - name: low_workers
+          metric: iii.workers.active
+          threshold: 1
+          operator: "<"
+          action: log
+```
+
+Query alert states:
+
+```typescript
+const alerts = await client.call('engine::alerts::list', {});
+
+// Manually evaluate alerts
+const triggered = await client.call('engine::alerts::evaluate', {});
+```
+
+## Health Check
+
+Check observability system health:
+
+```typescript
+const health = await client.call('engine::health::check', {});
+
+// Returns:
+// {
+//   status: 'healthy',
+//   components: {
+//     otel: { status: 'healthy', details: {...} },
+//     metrics: { status: 'healthy', details: {...} },
+//     logs: { status: 'healthy', details: {...} },
+//     spans: { status: 'healthy', details: {...} }
+//   },
+//   timestamp: 1234567890,
+//   version: '0.1.0'
+// }
+```
+
+## Distributed Tracing
+
+Traces automatically propagate across:
+- HTTP calls
+- Queue messages
+- Stream events
+- State changes
+
+```typescript
+// Publisher (HTTP endpoint)
+export async function createOrder(input: any) {
+  // This creates a trace span
+  const order = await db.orders.create(input.body);
+  
+  // Queue message inherits trace context
+  await client.call('queue.enqueue', {
+    topic: 'orders.process',
+    data: order,
+  });
+  
+  return order;
+}
+
+// Subscriber (continues the trace)
+export async function processOrder(data: any) {
+  // This span is linked to the HTTP request
+  console.log('Processing order:', data.id);
+}
+```
+
+## Baggage
+
+Propagate custom context across traces:
+
+```typescript
+// Set baggage
+await client.call('engine::baggage::set', {
+  key: 'user_id',
+  value: '123',
+});
+
+// Get baggage
+const baggage = await client.call('engine::baggage::get', {
+  key: 'user_id',
+});
+
+// Get all baggage
+const all = await client.call('engine::baggage::get_all', {});
+```
+
+## Exporting to OTLP Collector
+
+Export to Jaeger, Zipkin, or other OTLP collectors:
+
+```yaml config.yaml
+modules:
+  - class: modules::observability::OtelModule
+    config:
+      exporter: otlp
+      endpoint: http://localhost:4317
+      metrics_exporter: otlp
+      logs_exporter: otlp
+```
+
+Docker Compose example:
+
+```yaml docker-compose.yml
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+```
+
+## Best Practices
+
+1. **Production**: Use `exporter: otlp` with sampling
+2. **Development**: Use `exporter: memory` for debugging
+3. **Sampling**: Adjust based on traffic (0.1 = 10% for high traffic)
+4. **Alerts**: Configure for critical metrics
+5. **Log Triggers**: Use for error notification
+6. **Retention**: Balance storage vs. retention needs
+
+## Performance Impact
+
+- **Memory exporter**: Low overhead, limited by max_spans
+- **OTLP exporter**: Network overhead, offloads storage
+- **Sampling**: Reduces overhead proportionally
+- **Logs**: Consider sampling for high-volume applications
+
+## Source Code Reference
+
+- Module: `src/modules/observability/mod.rs:278`
+- Logging functions: `src/modules/observability/mod.rs:329`
+- Traces API: `src/modules/observability/mod.rs:591`
+- Metrics API: `src/modules/observability/mod.rs:769`
+- Logs API: `src/modules/observability/mod.rs:947`

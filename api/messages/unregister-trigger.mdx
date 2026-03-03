@@ -1,0 +1,92 @@
+---
+title: UnregisterTrigger
+description: Remove a registered trigger
+---
+
+## Request
+
+Unregister a trigger to stop it from invoking its associated function.
+
+<ParamField name="type" type="string" required>
+  Message type. Must be `"unregistertrigger"`.
+</ParamField>
+
+<ParamField name="id" type="string" required>
+  The unique identifier of the trigger to unregister.
+</ParamField>
+
+<ParamField name="trigger_type" type="string">
+  Optional trigger type. Can be provided for validation or logging purposes.
+</ParamField>
+
+## Response
+
+This message typically does not have a dedicated response. The framework will stop invoking the function via this trigger after processing the unregister request.
+
+## Examples
+
+### Unregister Trigger by ID
+
+```json
+{
+  "type": "unregistertrigger",
+  "id": "http_webhook_handler"
+}
+```
+
+### Unregister Trigger with Type
+
+```json
+{
+  "type": "unregistertrigger",
+  "id": "daily_report",
+  "trigger_type": "cron"
+}
+```
+
+### Unregister Multiple Triggers
+
+To unregister multiple triggers, send separate messages for each:
+
+```json
+{
+  "type": "unregistertrigger",
+  "id": "trigger_1"
+}
+```
+
+```json
+{
+  "type": "unregistertrigger",
+  "id": "trigger_2"
+}
+```
+
+```json
+{
+  "type": "unregistertrigger",
+  "id": "trigger_3"
+}
+```
+
+## Error Cases
+
+### Trigger Not Found
+
+If the trigger ID doesn't exist, the framework may silently ignore the request or log a warning. The exact behavior depends on the framework implementation.
+
+No error response is sent to the client in most cases, as unregister operations are idempotent.
+
+## Notes
+
+- Unregistering a trigger does not unregister the associated function
+- The `trigger_type` field is optional and defaults to `None` if not provided
+- Unregister operations are idempotent - unregistering a non-existent trigger is safe
+- In-flight invocations triggered before unregistration may still complete
+- The trigger will stop accepting new events immediately after unregistration
+- The associated function remains registered and can be invoked directly or by other triggers
+
+## Related Messages
+
+- [RegisterTrigger](/api/messages/register-trigger) - Register a trigger
+- [RegisterFunction](/api/messages/register-function) - Register a function that can be triggered

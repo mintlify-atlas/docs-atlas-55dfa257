@@ -1,0 +1,363 @@
+---
+title: "Node.js SDK"
+description: "Connect to iii from Node.js applications and register functions and triggers"
+---
+
+## Installation
+
+Install the iii SDK via npm:
+
+```bash
+npm install iii-sdk
+```
+
+Or with yarn:
+
+```bash
+yarn add iii-sdk
+```
+
+## Quick Start
+
+Here's a simple example that creates a function and exposes it via HTTP:
+
+```javascript
+import { init } from 'iii-sdk';
+
+const iii = init('ws://localhost:49134');
+
+iii.registerFunction({ id: 'math.add' }, async (input) => {
+  return { sum: input.a + input.b };
+});
+
+iii.registerTrigger({
+  type: 'http',
+  function_id: 'math.add',
+  config: { api_path: 'add', http_method: 'POST' },
+});
+```
+
+Your function is now live at `http://localhost:3111/add`.
+
+## Connection
+
+### Initialize the SDK
+
+Connect to the iii engine using the WebSocket URL:
+
+```javascript
+import { init } from 'iii-sdk';
+
+const iii = init('ws://localhost:49134');
+```
+
+The SDK automatically connects to the engine and maintains the connection.
+
+### Environment Variables
+
+You can configure the connection URL using environment variables:
+
+```javascript
+const iii = init(process.env.III_ENGINE_URL || 'ws://localhost:49134');
+```
+
+## Registering Functions
+
+### Basic Function Registration
+
+Register a function that can be invoked by the engine:
+
+```javascript
+iii.registerFunction({ id: 'greet.user' }, async (input) => {
+  const name = input.name || 'World';
+  return { message: `Hello, ${name}!` };
+});
+```
+
+### Function with Description
+
+Provide metadata about your function:
+
+```javascript
+iii.registerFunction(
+  {
+    id: 'user.create',
+    description: 'Create a new user in the database',
+  },
+  async (input) => {
+    // Create user logic
+    const user = await createUser(input);
+    return { user_id: user.id, created: true };
+  }
+);
+```
+
+### Async Operations
+
+All function handlers support async/await:
+
+```javascript
+iii.registerFunction({ id: 'data.fetch' }, async (input) => {
+  const response = await fetch(input.url);
+  const data = await response.json();
+  return { data };
+});
+```
+
+### Error Handling
+
+Handle errors gracefully in your functions:
+
+```javascript
+iii.registerFunction({ id: 'divide' }, async (input) => {
+  if (input.b === 0) {
+    throw new Error('Division by zero');
+  }
+  return { result: input.a / input.b };
+});
+```
+
+## Registering Triggers
+
+Triggers determine when and how functions are invoked. iii supports multiple trigger types.
+
+<Tabs>
+  <Tab title="HTTP">
+    Expose functions as HTTP endpoints:
+
+    ```javascript
+    iii.registerTrigger({
+      type: 'http',
+      function_id: 'math.add',
+      config: {
+        api_path: 'add',
+        http_method: 'POST'
+      },
+    });
+    ```
+
+    **Configuration options:**
+    - `api_path`: The URL path (e.g., 'add' → `/add`)
+    - `http_method`: HTTP method (GET, POST, PUT, DELETE, PATCH)
+
+    **Dynamic routes:**
+    ```javascript
+    iii.registerTrigger({
+      type: 'http',
+      function_id: 'user.get',
+      config: {
+        api_path: 'users/:id',
+        http_method: 'GET'
+      },
+    });
+    ```
+  </Tab>
+
+  <Tab title="Queue">
+    Subscribe to queue topics:
+
+    ```javascript
+    iii.registerTrigger({
+      type: 'queue',
+      function_id: 'email.send',
+      config: {
+        topic: 'notifications'
+      },
+    });
+    ```
+
+    The function will be invoked whenever a message is published to the topic.
+  </Tab>
+
+  <Tab title="Cron">
+    Schedule functions to run on a cron schedule:
+
+    ```javascript
+    iii.registerTrigger({
+      type: 'cron',
+      function_id: 'cleanup.daily',
+      config: {
+        schedule: '0 2 * * *' // Every day at 2 AM
+      },
+    });
+    ```
+
+    Uses standard cron syntax.
+  </Tab>
+
+  <Tab title="Stream">
+    React to real-time state changes:
+
+    ```javascript
+    iii.registerTrigger({
+      type: 'stream',
+      function_id: 'handle.update',
+      config: {
+        channel: 'user-updates'
+      },
+    });
+    ```
+
+    Functions are invoked when data is streamed to the channel.
+  </Tab>
+</Tabs>
+
+## Invoking Functions
+
+You can invoke functions directly from your code:
+
+```javascript
+// Invoke a function and wait for the result
+const result = await iii.invoke('math.add', { a: 5, b: 3 });
+console.log(result.sum); // 8
+```
+
+### Fire-and-Forget Invocations
+
+Invoke a function without waiting for the result:
+
+```javascript
+// Send the invocation and continue immediately
+iii.invoke('log.event', { event: 'user_login' }, { fireAndForget: true });
+```
+
+## Complete Example
+
+Here's a full example demonstrating multiple features:
+
+```javascript
+import { init } from 'iii-sdk';
+
+const iii = init('ws://localhost:49134');
+
+// Register a greeting function
+iii.registerFunction(
+  {
+    id: 'greet',
+    description: 'Generate a personalized greeting',
+  },
+  async (input) => {
+    const { name } = input;
+    return { greeting: `Hello, ${name}!`, timestamp: new Date() };
+  }
+);
+
+// Expose via HTTP GET
+iii.registerTrigger({
+  type: 'http',
+  function_id: 'greet',
+  config: { api_path: 'greet', http_method: 'GET' },
+});
+
+// Register a background job
+iii.registerFunction(
+  { id: 'process.data' },
+  async (input) => {
+    console.log('Processing:', input);
+    // Process data...
+    return { processed: true };
+  }
+);
+
+// Trigger on queue messages
+iii.registerTrigger({
+  type: 'queue',
+  function_id: 'process.data',
+  config: { topic: 'data-processing' },
+});
+
+// Schedule a daily cleanup
+iii.registerFunction(
+  { id: 'cleanup' },
+  async () => {
+    console.log('Running daily cleanup...');
+    // Cleanup logic
+    return { cleaned: true };
+  }
+);
+
+iii.registerTrigger({
+  type: 'cron',
+  function_id: 'cleanup',
+  config: { schedule: '0 0 * * *' },
+});
+
+console.log('Worker connected and ready!');
+```
+
+## API Reference
+
+### `init(url: string)`
+
+Initialize the SDK and connect to the iii engine.
+
+**Parameters:**
+- `url`: WebSocket URL of the iii engine (default: `ws://localhost:49134`)
+
+**Returns:** SDK instance
+
+### `registerFunction(request, handler)`
+
+Register a function with the engine.
+
+**Parameters:**
+- `request.id`: Unique function identifier
+- `request.description`: Optional description
+- `handler`: Async function that receives input and returns output
+
+### `registerTrigger(trigger)`
+
+Register a trigger for a function.
+
+**Parameters:**
+- `trigger.type`: Trigger type (`http`, `queue`, `cron`, `stream`)
+- `trigger.function_id`: ID of the function to invoke
+- `trigger.config`: Trigger-specific configuration
+
+### `invoke(functionId, input, options?)`
+
+Invoke a function programmatically.
+
+**Parameters:**
+- `functionId`: ID of the function to invoke
+- `input`: Input data for the function
+- `options.fireAndForget`: Don't wait for result (optional)
+
+**Returns:** Promise resolving to function result
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use meaningful function IDs">
+    Use namespaced IDs like `user.create`, `email.send`, `data.transform` to organize your functions.
+  </Accordion>
+
+  <Accordion title="Handle errors gracefully">
+    Always handle errors in your functions and return meaningful error messages.
+  </Accordion>
+
+  <Accordion title="Keep functions focused">
+    Each function should do one thing well. Use function invocations to compose complex workflows.
+  </Accordion>
+
+  <Accordion title="Use TypeScript for type safety">
+    The SDK supports TypeScript for better type checking and IDE support.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Python SDK" icon="python" href="/sdks/python">
+    Learn about the Python SDK
+  </Card>
+  <Card title="Rust SDK" icon="rust" href="/sdks/rust">
+    Learn about the Rust SDK
+  </Card>
+  <Card title="HTTP Module" icon="globe" href="/modules/http">
+    Deep dive into HTTP triggers
+  </Card>
+  <Card title="Queue Module" icon="layer-group" href="/modules/queue">
+    Learn about queue-based triggers
+  </Card>
+</CardGroup>

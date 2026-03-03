@@ -1,0 +1,542 @@
+---
+title: Production
+description: Deploy iii in production with security hardening
+---
+
+This guide covers production deployment of iii with security hardening, monitoring, and high availability.
+
+## Hardened Docker Setup
+
+Run iii with security constraints:
+
+```bash
+docker run --read-only --tmpfs /tmp \
+  --cap-drop=ALL --cap-add=NET_BIND_SERVICE \
+  --security-opt=no-new-privileges:true \
+  -v ./config.yaml:/app/config.yaml:ro \
+  -p 3111:3111 -p 49134:49134 -p 3112:3112 -p 9464:9464 \
+  iiidev/iii:latest
+```
+
+**Security flags:**
+
+- `--read-only` - Read-only root filesystem
+- `--tmpfs /tmp` - Writable temporary directory
+- `--cap-drop=ALL` - Drop all Linux capabilities
+- `--cap-add=NET_BIND_SERVICE` - Allow binding to ports < 1024
+- `--security-opt=no-new-privileges:true` - Prevent privilege escalation
+
+## Docker Compose Production
+
+Use `docker-compose.prod.yml` for production with Caddy reverse proxy:
+
+```yaml docker-compose.prod.yml
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      iii:
+        condition: service_healthy
+    restart: unless-stopped
+
+  iii:
+    image: iiidev/iii:latest
+    volumes:
+      - ./config.prod.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 3111 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+```
+
+**Start production stack:**
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+## Reverse Proxy (Caddy)
+
+Caddy provides automatic HTTPS with Let's Encrypt:
+
+```caddyfile Caddyfile
+your-domain.com {
+	handle /api/* {
+		reverse_proxy iii:3111
+	}
+
+	handle /streams/* {
+		reverse_proxy iii:3112
+	}
+
+	handle /ws {
+		reverse_proxy iii:49134
+	}
+
+	handle {
+		reverse_proxy iii:3111
+	}
+}
+```
+
+**Features:**
+- Automatic HTTPS with Let's Encrypt
+- HTTP/2 and HTTP/3 support
+- Automatic certificate renewal
+- WebSocket proxying
+
+**Replace `your-domain.com`** with your actual domain. Caddy will automatically obtain SSL certificates.
+
+## Port Configuration
+
+iii exposes four ports:
+
+| Port | Service | Expose Publicly? | Notes |
+|------|---------|------------------|-------|
+| **49134** | WebSocket | Yes | Worker SDK connections |
+| **3111** | HTTP API | Via proxy | REST API endpoints |
+| **3112** | Stream API | Via proxy | Real-time streams |
+| **9464** | Metrics | No | Internal monitoring only |
+
+**Recommended network setup:**
+
+- Expose port `49134` directly for SDK connections (or via WSS proxy)
+- Proxy ports `3111` and `3112` through Caddy/nginx with HTTPS
+- Keep port `9464` internal (metrics scraping only)
+
+## Redis Setup
+
+iii requires Redis for Queue and Stream modules.
+
+### Redis Standalone
+
+```yaml
+redis:
+  image: redis:7-alpine
+  ports:
+    - "6379:6379"
+  volumes:
+    - redis_data:/data
+  command: redis-server --appendonly yes
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 5s
+    timeout: 3s
+    retries: 5
+  restart: unless-stopped
+```
+
+**Enable persistence:**
+
+```bash
+redis-server --appendonly yes
+```
+
+### Redis Cluster
+
+For high availability, use Redis Cluster or Redis Sentinel:
+
+```yaml
+redis_url: redis://redis-cluster:6379
+```
+
+Update your config:
+
+```yaml config.prod.yaml
+modules:
+  - class: modules::stream::StreamModule
+    config:
+      adapter:
+        class: modules::stream::adapters::RedisAdapter
+        config:
+          redis_url: ${REDIS_URL:redis://redis-cluster:6379}
+```
+
+## Production Configuration
+
+Example production config with security best practices:
+
+```yaml config.prod.yaml
+modules:
+  - class: modules::api::RestApiModule
+    config:
+      host: 0.0.0.0  # Bind all interfaces (behind reverse proxy)
+      port: 3111
+      default_timeout: 30000
+      concurrency_request_limit: 2048
+      cors:
+        allowed_origins:
+          - https://app.example.com
+          - https://admin.example.com
+        allowed_methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+
+  - class: modules::stream::StreamModule
+    config:
+      port: 3112
+      host: 0.0.0.0
+      adapter:
+        class: modules::stream::adapters::RedisAdapter
+        config:
+          redis_url: ${REDIS_URL:redis://redis:6379}
+
+  - class: modules::queue::QueueModule
+    config:
+      adapter:
+        class: modules::queue::RedisAdapter
+        config:
+          redis_url: ${REDIS_URL:redis://redis:6379}
+
+  - class: modules::state::StateModule
+    config:
+      adapter:
+        class: modules::state::adapters::KvStore
+        config:
+          store_method: file_based
+          file_path: /data/state_store.db
+
+  - class: modules::kv_server::KvServer
+    config:
+      store_method: file_based
+      file_path: /data/kv_store
+      save_interval_ms: 5000
+
+  - class: modules::observability::OtelModule
+    config:
+      enabled: true
+      service_name: iii-production
+      service_version: ${SERVICE_VERSION:0.2.0}
+      service_namespace: production
+      exporter: otlp
+      endpoint: ${OTEL_ENDPOINT:http://otel-collector:4317}
+      sampling_ratio: 0.1  # 10% sampling
+      metrics_enabled: true
+      logs_enabled: true
+      logs_exporter: otlp
+      logs_console_output: false  # Disable console in production
+
+  - class: modules::cron::CronModule
+    config:
+      adapter:
+        class: modules::cron::KvCronAdapter
+
+  - class: modules::pubsub::PubSubModule
+    config:
+      adapter:
+        class: modules::pubsub::LocalAdapter
+```
+
+**Key differences from development:**
+
+- `host: 0.0.0.0` - Bind all interfaces (behind reverse proxy)
+- Specific CORS origins (not `*`)
+- OTLP exporter for traces and logs
+- Reduced sampling ratio (10%)
+- File-based storage with persistent volumes
+- Console logging disabled for logs
+
+## Environment Variables
+
+Set production environment variables:
+
+```bash .env
+REDIS_URL=redis://redis-cluster:6379
+OTEL_ENABLED=true
+OTEL_EXPORTER_TYPE=otlp
+OTEL_ENDPOINT=http://otel-collector:4317
+SERVICE_VERSION=1.0.0
+SERVICE_NAMESPACE=production
+RUST_LOG=info
+```
+
+**Load with Docker Compose:**
+
+```yaml
+services:
+  iii:
+    env_file: .env
+```
+
+## Monitoring
+
+### Prometheus Metrics
+
+iii exposes Prometheus metrics on port `9464`:
+
+```yaml prometheus.yml
+scrape_configs:
+  - job_name: 'iii'
+    static_configs:
+      - targets: ['iii:9464']
+```
+
+**Available metrics:**
+
+- `iii_invocations_total` - Total function invocations
+- `iii_invocations_error` - Failed invocations
+- `iii_workers_active` - Active worker connections
+- `iii_http_requests_total` - HTTP requests
+- Custom metrics via OpenTelemetry
+
+### Health Checks
+
+iii provides health check endpoints:
+
+**HTTP health check:**
+
+```bash
+curl http://localhost:3111/health
+```
+
+**Docker healthcheck:**
+
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "nc -z 127.0.0.1 3111 || exit 1"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 10s
+```
+
+### OpenTelemetry
+
+Export traces and logs to OpenTelemetry Collector:
+
+```yaml
+- class: modules::observability::OtelModule
+  config:
+    enabled: true
+    exporter: otlp
+    endpoint: http://otel-collector:4317
+    logs_exporter: otlp
+    metrics_exporter: otlp
+```
+
+**Collector config:**
+
+```yaml otel-collector-config.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+  logging:
+    loglevel: debug
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [logging]
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      exporters: [logging]
+```
+
+## Scaling
+
+### Horizontal Scaling
+
+iii is stateless and can be scaled horizontally:
+
+```yaml
+services:
+  iii:
+    image: iiidev/iii:latest
+    deploy:
+      replicas: 3
+    volumes:
+      - ./config.prod.yaml:/app/config.yaml:ro
+```
+
+**Requirements:**
+- Shared Redis instance for Queue and Stream modules
+- Load balancer for HTTP traffic (Caddy, nginx, HAProxy)
+- Session affinity not required
+
+### Load Balancing
+
+Use Caddy with multiple upstream servers:
+
+```caddyfile
+your-domain.com {
+	reverse_proxy iii-1:3111 iii-2:3111 iii-3:3111 {
+		lb_policy round_robin
+		health_uri /health
+	}
+}
+```
+
+## Backup and Recovery
+
+### Redis Backup
+
+Enable Redis persistence:
+
+```bash
+redis-server --appendonly yes --save 60 1000
+```
+
+**Backup Redis data:**
+
+```bash
+docker exec redis redis-cli BGSAVE
+docker cp redis:/data/dump.rdb ./backup/
+```
+
+### State Storage Backup
+
+Backup file-based state:
+
+```bash
+docker cp iii:/data/state_store.db ./backup/
+docker cp iii:/data/kv_store ./backup/
+```
+
+**Automated backups:**
+
+```bash
+#!/bin/bash
+BACKUP_DIR="/backups/$(date +%Y%m%d)"
+mkdir -p $BACKUP_DIR
+
+docker exec redis redis-cli BGSAVE
+docker cp redis:/data/dump.rdb $BACKUP_DIR/
+docker cp iii:/data/state_store.db $BACKUP_DIR/
+docker cp iii:/data/kv_store $BACKUP_DIR/
+```
+
+## Security Checklist
+
+<Steps>
+  <Step title="Run as non-root user">
+    Use distroless image or create non-root user in Dockerfile
+  </Step>
+  
+  <Step title="Read-only filesystem">
+    Run with `--read-only` and mount writable volumes only where needed
+  </Step>
+  
+  <Step title="Drop capabilities">
+    Use `--cap-drop=ALL --cap-add=NET_BIND_SERVICE`
+  </Step>
+  
+  <Step title="Network isolation">
+    Use Docker networks, don't expose internal ports
+  </Step>
+  
+  <Step title="HTTPS/TLS everywhere">
+    Use Caddy or nginx for automatic HTTPS
+  </Step>
+  
+  <Step title="Restrict CORS origins">
+    Set specific allowed origins in production config
+  </Step>
+  
+  <Step title="Environment secrets">
+    Use Docker secrets or external secret managers
+  </Step>
+  
+  <Step title="Update regularly">
+    Keep iii and dependencies updated
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Connection Issues
+
+**Workers can't connect to WebSocket (port 49134):**
+
+```bash
+# Check if port is exposed
+docker ps
+
+# Test connection
+telnet localhost 49134
+
+# Check firewall
+sudo ufw status
+```
+
+### Redis Connection
+
+**iii can't connect to Redis:**
+
+```bash
+# Test Redis connection
+redis-cli -h redis ping
+
+# Check Redis logs
+docker logs redis
+
+# Verify REDIS_URL environment variable
+docker exec iii env | grep REDIS
+```
+
+### High Memory Usage
+
+**Reduce memory consumption:**
+
+```yaml
+# Lower sampling ratio
+sampling_ratio: 0.05
+
+# Reduce max spans
+memory_max_spans: 5000
+
+# Reduce metrics retention
+metrics_retention_seconds: 1800
+```
+
+### Logs
+
+**View iii logs:**
+
+```bash
+# Docker logs
+docker logs -f iii
+
+# Compose logs
+docker compose logs -f iii
+
+# Set debug logging
+docker run -e RUST_LOG=debug iiidev/iii:latest
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitoring" icon="chart-line" href="/advanced/monitoring">
+    Set up observability and alerting
+  </Card>
+  <Card title="Security" icon="shield" href="/advanced/security">
+    Advanced security hardening
+  </Card>
+</CardGroup>

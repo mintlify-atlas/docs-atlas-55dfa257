@@ -1,0 +1,318 @@
+---
+title: "HTTP Module"
+description: "Expose functions as HTTP/REST endpoints"
+---
+
+The HTTP module (RestApiModule) allows you to expose iii functions as HTTP/REST endpoints, making them accessible via standard HTTP requests.
+
+## Configuration
+
+Configure the HTTP module in `config.yaml`:
+
+```yaml config.yaml
+modules:
+  - class: modules::api::RestApiModule
+    config:
+      port: 3111
+      host: 127.0.0.1
+      default_timeout: 30000  # milliseconds
+      concurrency_request_limit: 1024
+      cors:
+        allowed_origins:
+          - '*'  # Allow all origins
+        allowed_methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+```
+
+### Configuration Options
+
+<ParamField path="port" type="number" default="3111">
+  HTTP server port
+</ParamField>
+
+<ParamField path="host" type="string" default="127.0.0.1">
+  Bind address for the HTTP server
+</ParamField>
+
+<ParamField path="default_timeout" type="number" default="30000">
+  Request timeout in milliseconds
+</ParamField>
+
+<ParamField path="concurrency_request_limit" type="number" default="1024">
+  Maximum concurrent HTTP requests
+</ParamField>
+
+<ParamField path="cors" type="object">
+  CORS configuration for cross-origin requests
+  
+  - `allowed_origins`: Array of allowed origins (use `'*'` for all)
+  - `allowed_methods`: Array of allowed HTTP methods
+</ParamField>
+
+## Creating HTTP Endpoints
+
+Define HTTP triggers in your function configuration:
+
+```typescript index.ts
+export default iii({
+  triggers: {
+    'get-user': {
+      type: 'http',
+      config: {
+        path: '/users/:id',
+        method: 'GET',
+      },
+    },
+    'create-user': {
+      type: 'http',
+      config: {
+        path: '/users',
+        method: 'POST',
+      },
+    },
+  },
+});
+
+export async function getUser(input: any) {
+  const userId = input.path_params.id;
+  return { id: userId, name: 'John Doe' };
+}
+
+export async function createUser(input: any) {
+  const { name, email } = input.body;
+  return { id: 123, name, email };
+}
+```
+
+## Request Input Format
+
+HTTP triggers receive input in this format:
+
+```typescript
+{
+  method: string;          // HTTP method: GET, POST, etc.
+  path: string;            // Request path
+  path_params: object;     // URL path parameters
+  query_params: object;    // Query string parameters
+  headers: object;         // Request headers
+  body: any;               // Parsed request body (JSON)
+}
+```
+
+### Example: Path Parameters
+
+```typescript
+// Trigger: GET /users/:id
+export async function getUser(input: any) {
+  const userId = input.path_params.id;  // Access :id parameter
+  return await db.users.get(userId);
+}
+```
+
+### Example: Query Parameters
+
+```typescript
+// Trigger: GET /search?q=rust&limit=10
+export async function search(input: any) {
+  const { q, limit } = input.query_params;
+  return await searchDatabase(q, parseInt(limit || '10'));
+}
+```
+
+### Example: Request Body
+
+```typescript
+// Trigger: POST /users
+export async function createUser(input: any) {
+  const { name, email } = input.body;
+  return await db.users.create({ name, email });
+}
+```
+
+## HTTP Methods
+
+Supported HTTP methods:
+
+- **GET** - Retrieve resources
+- **POST** - Create resources
+- **PUT** - Update/replace resources
+- **DELETE** - Delete resources
+- **PATCH** - Partial updates
+- **OPTIONS** - CORS preflight
+
+## Response Handling
+
+### Success Response
+
+Return data directly from your function:
+
+```typescript
+export async function getUser(input: any) {
+  return {
+    id: 123,
+    name: 'John Doe',
+    email: 'john@example.com',
+  };
+}
+```
+
+HTTP response:
+```json
+{
+  "id": 123,
+  "name": "John Doe",
+  "email": "john@example.com"
+}
+```
+
+### Error Response
+
+Throw errors to return error responses:
+
+```typescript
+export async function getUser(input: any) {
+  const user = await db.users.get(input.path_params.id);
+  if (!user) {
+    throw new Error('User not found');
+  }
+  return user;
+}
+```
+
+## Path Patterns
+
+The HTTP module supports dynamic path parameters:
+
+```yaml
+triggers:
+  my-endpoint:
+    type: http
+    config:
+      path: /api/users/:userId/posts/:postId
+      method: GET
+```
+
+Access parameters:
+```typescript
+const { userId, postId } = input.path_params;
+```
+
+## CORS Configuration
+
+### Allow All Origins (Development)
+
+```yaml
+cors:
+  allowed_origins:
+    - '*'
+  allowed_methods:
+    - GET
+    - POST
+```
+
+### Specific Origins (Production)
+
+```yaml
+cors:
+  allowed_origins:
+    - https://app.example.com
+    - https://admin.example.com
+  allowed_methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+```
+
+## Middleware & Timeout
+
+The HTTP module applies these layers automatically:
+
+1. **CORS** - Cross-origin resource sharing
+2. **Timeout** - Request timeout (configurable)
+3. **Concurrency Limit** - Max concurrent requests
+
+## Example: Complete API
+
+```typescript index.ts
+export default iii({
+  triggers: {
+    'list-todos': {
+      type: 'http',
+      config: { path: '/todos', method: 'GET' },
+    },
+    'create-todo': {
+      type: 'http',
+      config: { path: '/todos', method: 'POST' },
+    },
+    'get-todo': {
+      type: 'http',
+      config: { path: '/todos/:id', method: 'GET' },
+    },
+    'delete-todo': {
+      type: 'http',
+      config: { path: '/todos/:id', method: 'DELETE' },
+    },
+  },
+});
+
+export async function listTodos() {
+  return await state.list({ scope: 'todos' });
+}
+
+export async function createTodo(input: any) {
+  const { title, completed } = input.body;
+  const id = Date.now().toString();
+  await state.set({
+    scope: 'todos',
+    key: id,
+    value: { title, completed: completed || false },
+  });
+  return { id, title, completed };
+}
+
+export async function getTodo(input: any) {
+  const todo = await state.get({
+    scope: 'todos',
+    key: input.path_params.id,
+  });
+  if (!todo) throw new Error('Todo not found');
+  return todo;
+}
+
+export async function deleteTodo(input: any) {
+  await state.delete({
+    scope: 'todos',
+    key: input.path_params.id,
+  });
+  return { success: true };
+}
+```
+
+## Testing Endpoints
+
+```bash
+# List todos
+curl http://localhost:3111/todos
+
+# Create todo
+curl -X POST http://localhost:3111/todos \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Buy milk","completed":false}'
+
+# Get specific todo
+curl http://localhost:3111/todos/123
+
+# Delete todo
+curl -X DELETE http://localhost:3111/todos/123
+```
+
+## Source Code Reference
+
+- Module: `src/modules/rest_api/api_core.rs:69`
+- Router: `src/modules/rest_api/hot_router.rs`
+- Trigger registration: `src/modules/rest_api/api_core.rs:100`

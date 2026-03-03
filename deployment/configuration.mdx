@@ -1,0 +1,346 @@
+---
+title: Configuration
+description: Configure iii modules and environment variables
+---
+
+iii uses a YAML configuration file to define modules and their settings. The engine supports environment variable expansion, making it easy to configure for different environments.
+
+## Configuration File
+
+By default, iii looks for `config.yaml` in the current directory. You can specify a different path:
+
+```bash
+iii --config /path/to/config.yaml
+```
+
+If no config file is found, iii loads default modules: HTTP, Queue, Cron, Stream, and Observability.
+
+## Environment Variable Expansion
+
+Config files support environment variable expansion with default values:
+
+```yaml
+${VARIABLE_NAME:default_value}
+```
+
+**Examples:**
+
+```yaml
+modules:
+  - class: modules::stream::StreamModule
+    config:
+      port: ${STREAM_PORT:3112}
+      host: ${STREAM_HOST:127.0.0.1}
+      adapter:
+        class: modules::stream::adapters::RedisAdapter
+        config:
+          redis_url: ${REDIS_URL:redis://localhost:6379}
+```
+
+If `STREAM_PORT` is not set, it defaults to `3112`. If a variable has no default and is not set, the engine will panic with an error.
+
+## Module Configuration
+
+### Basic Structure
+
+Each module entry requires a `class` and optional `config`:
+
+```yaml
+modules:
+  - class: modules::api::RestApiModule
+    config:
+      port: 3111
+      host: 127.0.0.1
+```
+
+### REST API Module
+
+Configures the HTTP server for API endpoints.
+
+```yaml
+- class: modules::api::RestApiModule
+  config:
+    port: 3111
+    host: 127.0.0.1
+    default_timeout: 30000
+    concurrency_request_limit: 1024
+    cors:
+      allowed_origins:
+        - '*'
+      allowed_methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+```
+
+<ParamField path="port" type="number" default="3111">
+  HTTP server port
+</ParamField>
+
+<ParamField path="host" type="string" default="127.0.0.1">
+  Bind address (use `0.0.0.0` for all interfaces)
+</ParamField>
+
+<ParamField path="default_timeout" type="number" default="30000">
+  Default request timeout in milliseconds
+</ParamField>
+
+<ParamField path="concurrency_request_limit" type="number" default="1024">
+  Maximum concurrent requests
+</ParamField>
+
+### Stream Module
+
+Real-time WebSocket state synchronization.
+
+```yaml
+- class: modules::stream::StreamModule
+  config:
+    port: ${STREAM_PORT:3112}
+    host: 127.0.0.1
+    adapter:
+      class: modules::stream::adapters::RedisAdapter
+      config:
+        redis_url: redis://localhost:6379
+```
+
+**Alternative: File-based adapter**
+
+```yaml
+adapter:
+  class: modules::stream::adapters::KvStore
+  config:
+    store_method: file_based  # Options: in_memory, file_based
+    file_path: ./data/stream_store
+```
+
+### Queue Module
+
+Redis-backed message queue for async job processing.
+
+```yaml
+- class: modules::queue::QueueModule
+  config:
+    adapter:
+      class: modules::queue::RedisAdapter
+      config:
+        redis_url: redis://localhost:6379
+```
+
+### State Module
+
+Persistent key-value storage for application state.
+
+```yaml
+- class: modules::state::StateModule
+  config:
+    adapter:
+      class: modules::state::adapters::KvStore
+      config:
+        store_method: file_based
+        file_path: ./data/state_store.db
+```
+
+### KV Server
+
+Internal key-value server for coordination.
+
+```yaml
+- class: modules::kv_server::KvServer
+  config:
+    store_method: file_based  # Options: in_memory, file_based
+    file_path: ./data/kv_store
+    save_interval_ms: 5000
+```
+
+### Observability Module
+
+OpenTelemetry traces, metrics, and logs.
+
+```yaml
+- class: modules::observability::OtelModule
+  config:
+    enabled: ${OTEL_ENABLED:true}
+    service_name: ${OTEL_SERVICE_NAME:iii}
+    service_version: ${SERVICE_VERSION:0.2.0}
+    service_namespace: ${SERVICE_NAMESPACE:production}
+    
+    # Exporter: "otlp", "memory", or "both"
+    exporter: ${OTEL_EXPORTER_TYPE:memory}
+    endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}
+    
+    # Sampling
+    sampling_ratio: 1.0
+    
+    # Metrics
+    metrics_enabled: true
+    metrics_exporter: ${OTEL_METRICS_EXPORTER:memory}
+    metrics_retention_seconds: 3600
+    metrics_max_count: 10000
+    
+    # Logs
+    logs_enabled: ${OTEL_LOGS_ENABLED:true}
+    logs_exporter: ${OTEL_LOGS_EXPORTER:memory}
+    logs_max_count: ${OTEL_LOGS_MAX_COUNT:1000}
+    logs_retention_seconds: ${OTEL_LOGS_RETENTION_SECONDS:3600}
+    logs_sampling_ratio: ${OTEL_LOGS_SAMPLING_RATIO:1.0}
+    logs_console_output: ${OTEL_LOGS_CONSOLE_OUTPUT:true}
+```
+
+<ParamField path="exporter" type="string" default="memory">
+  Trace exporter: `otlp` (remote collector), `memory` (in-memory), or `both`
+</ParamField>
+
+<ParamField path="sampling_ratio" type="number" default="1.0">
+  Sampling ratio (0.0 to 1.0). Use 1.0 to sample all traces.
+</ParamField>
+
+### Cron Module
+
+Distributed cron scheduling.
+
+```yaml
+- class: modules::cron::CronModule
+  config:
+    adapter:
+      class: modules::cron::KvCronAdapter
+```
+
+### PubSub Module
+
+Publish-subscribe messaging.
+
+```yaml
+- class: modules::pubsub::PubSubModule
+  config:
+    adapter:
+      class: modules::pubsub::LocalAdapter
+```
+
+## Minimal Configuration
+
+For development without Redis:
+
+```yaml
+modules:
+  - class: modules::api::RestApiModule
+    config:
+      host: 127.0.0.1
+      port: 3111
+      
+  - class: modules::observability::OtelModule
+    config:
+      enabled: false
+```
+
+## Environment Variables
+
+Common environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STREAM_PORT` | `3112` | Stream WebSocket port |
+| `REDIS_URL` | `redis://localhost:6379` | Redis connection URL |
+| `OTEL_ENABLED` | `true` | Enable OpenTelemetry |
+| `OTEL_SERVICE_NAME` | `iii` | Service name for telemetry |
+| `SERVICE_VERSION` | `0.2.0` | Service version |
+| `SERVICE_NAMESPACE` | `production` | Environment namespace |
+| `OTEL_EXPORTER_TYPE` | `memory` | Trace exporter type |
+| `RUST_LOG` | - | Logging level (info, debug, trace) |
+
+**Set environment variables before starting iii:**
+
+```bash
+export REDIS_URL=redis://prod-redis:6379
+export OTEL_ENABLED=true
+export OTEL_EXPORTER_TYPE=otlp
+export RUST_LOG=info
+iii --config config.yaml
+```
+
+## Production Configuration
+
+For production deployments:
+
+```yaml
+modules:
+  - class: modules::api::RestApiModule
+    config:
+      host: 0.0.0.0  # Bind to all interfaces
+      port: 3111
+      default_timeout: 30000
+      concurrency_request_limit: 2048
+      cors:
+        allowed_origins:
+          - https://app.example.com
+        allowed_methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+
+  - class: modules::stream::StreamModule
+    config:
+      port: 3112
+      host: 0.0.0.0
+      adapter:
+        class: modules::stream::adapters::RedisAdapter
+        config:
+          redis_url: ${REDIS_URL:redis://redis:6379}
+
+  - class: modules::queue::QueueModule
+    config:
+      adapter:
+        class: modules::queue::RedisAdapter
+        config:
+          redis_url: ${REDIS_URL:redis://redis:6379}
+
+  - class: modules::state::StateModule
+    config:
+      adapter:
+        class: modules::state::adapters::KvStore
+        config:
+          store_method: file_based
+          file_path: /data/state_store.db
+
+  - class: modules::kv_server::KvServer
+    config:
+      store_method: file_based
+      file_path: /data/kv_store
+      save_interval_ms: 5000
+
+  - class: modules::observability::OtelModule
+    config:
+      enabled: true
+      service_name: iii-production
+      service_version: ${SERVICE_VERSION:0.2.0}
+      service_namespace: production
+      exporter: otlp
+      endpoint: ${OTEL_ENDPOINT:http://otel-collector:4317}
+      sampling_ratio: 0.1  # 10% sampling in production
+      metrics_enabled: true
+      logs_enabled: true
+
+  - class: modules::cron::CronModule
+    config:
+      adapter:
+        class: modules::cron::KvCronAdapter
+
+  - class: modules::pubsub::PubSubModule
+    config:
+      adapter:
+        class: modules::pubsub::LocalAdapter
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Deployment" icon="docker" href="/deployment/docker">
+    Run iii in containers
+  </Card>
+  <Card title="Production Setup" icon="server" href="/deployment/production">
+    Hardened production deployment
+  </Card>
+</CardGroup>

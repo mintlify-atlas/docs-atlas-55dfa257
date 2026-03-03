@@ -1,0 +1,590 @@
+---
+title: Monitoring & Observability
+description: Production monitoring with OpenTelemetry, Prometheus, and distributed tracing
+---
+
+iii provides comprehensive observability through OpenTelemetry integration, metrics collection, distributed tracing, and structured logging.
+
+## Configuration
+
+Configure observability in `config.yaml`:
+
+```yaml
+modules:
+  - class: modules::observability::OtelModule
+    config:
+      # Tracing configuration
+      enabled: true
+      service_name: my-service
+      service_version: 1.0.0
+      service_namespace: production
+      
+      # Exporter: otlp, memory, or both
+      exporter: otlp
+      endpoint: http://localhost:4317
+      
+      # Sampling (0.0 to 1.0)
+      sampling_ratio: 1.0
+      
+      # Memory storage (for 'memory' or 'both' exporters)
+      memory_max_spans: 1000
+      
+      # Metrics configuration
+      metrics_enabled: true
+      metrics_exporter: otlp  # or 'memory'
+      metrics_retention_seconds: 3600
+      metrics_max_count: 10000
+      
+      # Logs configuration
+      logs_enabled: true
+      logs_exporter: memory  # or 'otlp', 'both'
+      logs_retention_seconds: 3600
+      logs_max_count: 10000
+```
+
+## OpenTelemetry Traces
+
+### Exporters
+
+iii supports multiple trace exporters:
+
+#### OTLP (Production)
+
+Export traces to OpenTelemetry collectors (Jaeger, Grafana Tempo, etc.).
+
+```yaml
+exporter: otlp
+endpoint: http://localhost:4317
+```
+
+**Collector setup (Docker Compose):**
+
+```yaml
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+```
+
+#### Memory (Development)
+
+Store traces in-memory for API querying.
+
+```yaml
+exporter: memory
+memory_max_spans: 1000
+```
+
+Query via REST API:
+
+```bash
+curl http://localhost:3111/api/traces/list
+```
+
+#### Both (Hybrid)
+
+Export to OTLP and store in memory (enables trace-based triggers).
+
+```yaml
+exporter: both
+endpoint: http://localhost:4317
+memory_max_spans: 1000
+```
+
+### Distributed Tracing
+
+iii automatically propagates W3C trace context across function invocations.
+
+**Trace context format:**
+
+```
+traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
+             ││  │                                │                  │
+             ││  └─ trace-id (128-bit)            │                  └─ flags
+             ││                                    └─ parent-id (64-bit)
+             │└─ version
+             └─ version
+```
+
+**Manual trace injection:**
+
+```javascript
+import { init } from 'iii-sdk';
+
+const iii = init('ws://localhost:49134');
+
+await iii.invoke('my.function', 
+  { data: 'value' },
+  {
+    traceparent: '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01',
+    baggage: 'user_id=123,session_id=abc'
+  }
+);
+```
+
+### Trace API
+
+**List traces:**
+
+```bash
+curl -X POST http://localhost:3111/api/traces/list \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_name": "my-service",
+    "min_duration_ms": 100,
+    "limit": 50
+  }'
+```
+
+**Filter options:**
+
+```typescript
+interface TracesListInput {
+  trace_id?: string;              // Specific trace ID
+  offset?: number;                // Pagination offset
+  limit?: number;                 // Pagination limit (default: 100)
+  service_name?: string;          // Filter by service
+  name?: string;                  // Filter by span name
+  status?: string;                // Filter by status
+  min_duration_ms?: number;       // Minimum duration
+  max_duration_ms?: number;       // Maximum duration
+  start_time?: number;            // Unix timestamp (ms)
+  end_time?: number;              // Unix timestamp (ms)
+  sort_by?: "duration" | "start_time" | "name";
+  sort_order?: "asc" | "desc";
+  attributes?: [string, string][]; // Exact attribute matches
+  include_internal?: boolean;     // Include engine.* traces
+}
+```
+
+**Get trace tree:**
+
+```bash
+curl -X POST http://localhost:3111/api/traces/tree \
+  -H "Content-Type: application/json" \
+  -d '{"trace_id": "0af7651916cd43dd8448eb211c80319c"}'
+```
+
+## Metrics
+
+### Metrics Exporters
+
+#### Memory (Default)
+
+Store metrics in-memory for API querying.
+
+```yaml
+metrics_enabled: true
+metrics_exporter: memory
+metrics_retention_seconds: 3600
+metrics_max_count: 10000
+```
+
+#### OTLP (Production)
+
+Export metrics to OpenTelemetry collectors.
+
+```yaml
+metrics_enabled: true
+metrics_exporter: otlp
+endpoint: http://localhost:4317
+```
+
+### Prometheus Metrics
+
+iii exposes Prometheus-compatible metrics on port **9464**.
+
+```bash
+curl http://localhost:9464/metrics
+```
+
+**Key metrics:**
+
+```prometheus
+# Invocation metrics
+iii_invocations_total{function_id="math.add"} 1234
+iii_invocation_duration_seconds{function_id="math.add"} 0.042
+iii_invocation_errors_total{function_id="math.add"} 5
+
+# Worker metrics
+iii_workers_active 3
+iii_workers_spawns_total 10
+iii_workers_deaths_total 2
+iii_workers_by_status{status="connected"} 3
+
+# Worker resource metrics
+iii_worker_memory_heap_bytes{worker_id="w1"} 45678912
+iii_worker_memory_rss_bytes{worker_id="w1"} 89123456
+iii_worker_cpu_percent{worker_id="w1"} 12.5
+iii_worker_event_loop_lag_ms{worker_id="w1"} 2.3
+iii_worker_uptime_seconds{worker_id="w1"} 3600
+```
+
+See `src/modules/observability/metrics.rs:244` for full metric definitions.
+
+### Metrics API
+
+**List metrics:**
+
+```bash
+curl -X POST http://localhost:3111/api/metrics/list \
+  -H "Content-Type: application/json" \
+  -d '{
+    "metric_name": "iii.invocations.total",
+    "start_time": 1640000000000,
+    "end_time": 1640100000000,
+    "aggregate_interval": 300
+  }'
+```
+
+**Query options:**
+
+```typescript
+interface MetricsListInput {
+  start_time?: number;        // Unix timestamp (ms)
+  end_time?: number;          // Unix timestamp (ms)
+  metric_name?: string;       // Filter by metric name
+  aggregate_interval?: number; // Aggregation interval (seconds)
+}
+```
+
+### Worker Metrics
+
+Workers automatically report resource metrics:
+
+```typescript
+// Node.js SDK auto-reports these metrics
+interface WorkerMetrics {
+  memory_heap_used: number;    // Heap memory used (bytes)
+  memory_heap_total: number;   // Total heap (bytes)
+  memory_rss: number;          // Resident set size (bytes)
+  memory_external: number;     // External memory (bytes)
+  
+  cpu_user_micros: number;     // User CPU time (μs)
+  cpu_system_micros: number;   // System CPU time (μs)
+  cpu_percent: number;         // Current CPU %
+  
+  event_loop_lag_ms: number;   // Event loop lag (ms)
+  uptime_seconds: number;      // Worker uptime (s)
+  
+  timestamp_ms: number;        // Metric timestamp
+  runtime: string;             // "node", "rust", "python"
+}
+```
+
+Query worker metrics:
+
+```bash
+curl http://localhost:3111/api/workers/list
+```
+
+Response includes `latest_metrics` for each worker.
+
+## Structured Logging
+
+### Log Levels
+
+Configure via environment or YAML:
+
+```yaml
+modules:
+  - class: modules::observability::LoggingModule
+    config:
+      level: info  # trace, debug, info, warn, error
+      format: json # or 'pretty'
+```
+
+### Log Exporters
+
+#### Memory
+
+Store logs in-memory for querying.
+
+```yaml
+logs_enabled: true
+logs_exporter: memory
+logs_retention_seconds: 3600
+logs_max_count: 10000
+```
+
+#### OTLP
+
+Export logs to OpenTelemetry collectors.
+
+```yaml
+logs_enabled: true
+logs_exporter: otlp
+endpoint: http://localhost:4317
+```
+
+### Logs API
+
+**List logs:**
+
+```bash
+curl -X POST http://localhost:3111/api/logs/list \
+  -H "Content-Type: application/json" \
+  -d '{
+    "level": "error",
+    "limit": 100
+  }'
+```
+
+## Alerting
+
+Configure metric-based alerts:
+
+```yaml
+modules:
+  - class: modules::observability::OtelModule
+    config:
+      alerts:
+        - name: high_error_rate
+          metric: iii.invocations.error
+          threshold: 10
+          operator: ">"
+          window_seconds: 60
+          cooldown_seconds: 300
+          action:
+            type: webhook
+            url: https://hooks.slack.com/...
+        
+        - name: worker_memory_high
+          metric: worker.memory.rss
+          threshold: 1073741824  # 1GB
+          operator: ">="
+          window_seconds: 30
+          action:
+            type: function
+            path: alerts.worker_memory
+```
+
+**Alert operators:**
+- `>` (greater than)
+- `>=` (greater than or equal)
+- `<` (less than)
+- `<=` (less than or equal)
+- `==` (equal)
+- `!=` (not equal)
+
+**Alert actions:**
+
+```yaml
+# Log alert (default)
+action:
+  type: log
+
+# Webhook notification
+action:
+  type: webhook
+  url: https://example.com/webhook
+
+# Function invocation
+action:
+  type: function
+  path: my.alert.handler
+```
+
+## Advanced Sampling
+
+Configure sampling strategies to reduce trace volume:
+
+```yaml
+modules:
+  - class: modules::observability::OtelModule
+    config:
+      sampling:
+        # Default sampling ratio
+        default: 0.1  # Sample 10% of traces
+        
+        # Per-operation sampling
+        rules:
+          - operation: "api.health"
+            ratio: 0.01  # Sample 1% of health checks
+          
+          - operation: "auth.*"
+            ratio: 1.0   # Sample 100% of auth operations
+          
+          - service: "critical-service"
+            ratio: 1.0   # Sample all traces from this service
+        
+        # Rate limiting (traces per second)
+        rate_limit: 100
+```
+
+See `src/modules/observability/config.rs:142` for sampling configuration.
+
+## Production Setup
+
+### Full Observability Stack
+
+**docker-compose.yml:**
+
+```yaml
+services:
+  iii:
+    image: iiidev/iii:latest
+    ports:
+      - "3111:3111"
+      - "49134:49134"
+      - "9464:9464"
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+  
+  # Traces: Grafana Tempo
+  tempo:
+    image: grafana/tempo:latest
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml
+      - tempo-data:/tmp/tempo
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "3200:3200"   # Tempo
+  
+  # Metrics: Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+  
+  # Visualization: Grafana
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+
+volumes:
+  tempo-data:
+  prometheus-data:
+  grafana-data:
+```
+
+**prometheus.yml:**
+
+```yaml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'iii'
+    static_configs:
+      - targets: ['iii:9464']
+```
+
+### Environment Variables
+
+Override configuration via environment:
+
+```bash
+# Tracing
+export OTEL_ENABLED=true
+export OTEL_SERVICE_NAME=my-service
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+export OTEL_TRACES_SAMPLER_ARG=0.1
+
+# Metrics
+export OTEL_METRICS_ENABLED=true
+export OTEL_METRICS_EXPORTER=otlp
+export OTEL_METRICS_RETENTION_SECONDS=7200
+export OTEL_METRICS_MAX_COUNT=50000
+```
+
+## Best Practices
+
+### Sampling Strategy
+
+- Use lower sampling for high-traffic endpoints (health checks, static assets)
+- Use 100% sampling for critical operations (auth, payments)
+- Implement rate limiting to prevent trace storms
+- Monitor sampling effectiveness in production
+
+### Metric Cardinality
+
+- Limit unique label combinations to avoid cardinality explosion
+- Use metric aggregation for high-cardinality data
+- Set appropriate retention periods
+- Monitor memory usage for in-memory storage
+
+### Trace Context Propagation
+
+- Always propagate `traceparent` and `baggage` headers
+- Use baggage for cross-cutting concerns (user_id, request_id)
+- Avoid large baggage payloads (max ~8KB)
+
+### Performance
+
+- Use OTLP exporter for production (lower overhead than memory)
+- Batch metrics exports (default: 60s interval)
+- Configure appropriate buffer sizes
+- Monitor exporter queue depth
+
+### Security
+
+- Use TLS for OTLP endpoints in production
+- Sanitize sensitive data from traces/logs
+- Implement access controls for observability APIs
+- Rotate service credentials regularly
+
+## Troubleshooting
+
+### High Memory Usage
+
+```yaml
+# Reduce in-memory retention
+metrics_max_count: 5000
+memory_max_spans: 500
+logs_max_count: 5000
+```
+
+### Missing Traces
+
+- Check sampling ratio (may be too low)
+- Verify OTLP endpoint connectivity
+- Check for trace export errors in logs
+
+### Prometheus Scrape Failures
+
+```bash
+# Verify metrics endpoint
+curl http://localhost:9464/metrics
+
+# Check Prometheus targets
+curl http://localhost:9090/targets
+```
+
+### High Cardinality
+
+```
+Metric cardinality limit reached, new metric names will be dropped.
+```
+
+Reduce label combinations or increase limit:
+
+```rust
+// In custom adapter
+max_unique_names: 50000
+```
+
+## References
+
+- OpenTelemetry implementation: `src/modules/observability/otel.rs`
+- Metrics implementation: `src/modules/observability/metrics.rs`
+- Sampling strategies: `src/modules/observability/sampler.rs`
+- Configuration: `src/modules/observability/config.rs`

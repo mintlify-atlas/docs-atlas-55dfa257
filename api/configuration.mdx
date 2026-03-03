@@ -1,0 +1,444 @@
+---
+title: "Configuration"
+description: "EngineConfig structure and YAML configuration reference"
+---
+
+The `EngineConfig` struct defines the structure of the `config.yaml` file used to configure the iii framework engine.
+
+## EngineConfig Struct
+
+```rust src/modules/config.rs
+#[derive(Debug, Deserialize)]
+pub struct EngineConfig {
+    #[serde(default = "default_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub modules: Vec<ModuleEntry>,
+}
+```
+
+### Fields
+
+<ParamField path="port" type="u16" default="49134">
+  WebSocket server port. Defaults to `49134` if not specified.
+</ParamField>
+
+<ParamField path="modules" type="Vec<ModuleEntry>" default="[]">
+  List of modules to load. Each entry specifies a module class and optional configuration.
+</ParamField>
+
+## ModuleEntry Struct
+
+```rust src/modules/config.rs
+#[derive(Debug, Deserialize)]
+pub struct ModuleEntry {
+    pub class: String,
+    #[serde(default)]
+    pub config: Option<Value>,
+}
+```
+
+### Fields
+
+<ParamField path="class" type="String" required>
+  Fully qualified module class name (e.g., `"modules::api::RestApiModule"`)
+</ParamField>
+
+<ParamField path="config" type="Option<Value>" default="None">
+  Module-specific JSON configuration. Structure varies by module type.
+</ParamField>
+
+## YAML Configuration
+
+### Basic Example
+
+```yaml config.yaml
+port: 49134
+
+modules:
+  - class: modules::api::RestApiModule
+    config:
+      port: 3111
+      host: 127.0.0.1
+
+  - class: modules::queue::QueueModule
+    config:
+      adapter:
+        class: modules::queue::RedisAdapter
+        config:
+          redis_url: redis://localhost:6379
+```
+
+### With Environment Variables
+
+The configuration supports environment variable expansion using the `${VAR_NAME}` or `${VAR_NAME:default}` syntax:
+
+```yaml config.yaml
+port: ${PORT:49134}
+
+modules:
+  - class: modules::queue::QueueModule
+    config:
+      adapter:
+        class: modules::queue::RedisAdapter
+        config:
+          redis_url: ${REDIS_URL:redis://localhost:6379}
+
+  - class: modules::observability::OtelModule
+    config:
+      endpoint: ${OTEL_ENDPOINT:http://localhost:4317}
+      service_name: ${SERVICE_NAME:iii-engine}
+```
+
+**Environment Variable Syntax**:
+
+- `${VAR_NAME}` - Required variable (panics if not set)
+- `${VAR_NAME:default}` - Optional with default value
+- `${VAR_NAME:}` - Optional with empty string default
+
+### Complete Example
+
+```yaml config.yaml
+port: 49134
+
+modules:
+  # HTTP API Module
+  - class: modules::api::RestApiModule
+    config:
+      port: 3111
+      host: 127.0.0.1
+
+  # Queue Module with Redis
+  - class: modules::queue::QueueModule
+    config:
+      adapter:
+        class: modules::queue::RedisAdapter
+        config:
+          redis_url: ${REDIS_URL:redis://localhost:6379}
+
+  # Stream Module with Redis
+  - class: modules::stream::StreamModule
+    config:
+      adapter:
+        class: modules::stream::adapters::RedisAdapter
+        config:
+          redis_url: ${REDIS_URL:redis://localhost:6379}
+
+  # Cron Module
+  - class: modules::cron::CronModule
+
+  # State Module with File Storage
+  - class: modules::state::StateModule
+    config:
+      adapter:
+        class: modules::state::adapters::FileAdapter
+        config:
+          path: ./data/state
+
+  # Observability Module
+  - class: modules::observability::OtelModule
+    config:
+      endpoint: ${OTEL_ENDPOINT:http://localhost:4317}
+      service_name: iii-engine
+```
+
+## Methods
+
+### `EngineConfig::config_file_or_default()`
+
+Loads configuration from a file or returns default configuration.
+
+```rust
+pub fn config_file_or_default(path: &str) -> anyhow::Result<Self>
+```
+
+<ParamField path="path" type="&str" required>
+  Path to YAML configuration file
+</ParamField>
+
+**Returns**: `Result<EngineConfig>` - Parsed config or error
+
+**Behavior**:
+- If file exists: Parses YAML, expands environment variables, returns config
+- If file missing: Returns config with default modules from inventory
+- If parse error: Returns error with details
+
+**Example**:
+
+```rust src/main.rs
+use iii::modules::config::EngineConfig;
+
+let config = EngineConfig::config_file_or_default("config.yaml")?;
+let port = if config.port == 0 {
+    DEFAULT_PORT
+} else {
+    config.port
+};
+```
+
+### `EngineConfig::expand_env_vars()`
+
+Expands environment variables in YAML content.
+
+```rust
+pub(crate) fn expand_env_vars(yaml_content: &str) -> String
+```
+
+<ParamField path="yaml_content" type="&str" required>
+  Raw YAML content containing environment variable placeholders
+</ParamField>
+
+**Returns**: `String` - YAML content with variables expanded
+
+**Panics**: If a required variable (without default) is not set
+
+**Example**:
+
+```rust
+use std::env;
+
+env::set_var("TEST_HOST", "localhost");
+env::set_var("TEST_PORT", "8080");
+
+let input = r#"server:
+  host: ${TEST_HOST}
+  port: ${TEST_PORT}
+  timeout: ${TEST_TIMEOUT:30}"#;
+
+let output = EngineConfig::expand_env_vars(input);
+// Output:
+// server:
+//   host: localhost
+//   port: 8080
+//   timeout: 30
+```
+
+### `EngineConfig::default_modules()`
+
+Returns configuration with default modules from the inventory.
+
+```rust
+pub fn default_modules(self) -> Self
+```
+
+**Returns**: `EngineConfig` with default port and modules
+
+## Constants
+
+### `DEFAULT_PORT`
+
+```rust
+pub const DEFAULT_PORT: u16 = 49134;
+```
+
+Default WebSocket server port used when not specified in config.
+
+### `DEFAULT_HOST`
+
+```rust
+const DEFAULT_HOST: &str = "0.0.0.0";
+```
+
+Default server host (binds to all interfaces).
+
+## Module Configuration by Type
+
+### HTTP Module
+
+```yaml
+- class: modules::api::RestApiModule
+  config:
+    port: 3111          # HTTP server port
+    host: 127.0.0.1     # Bind address
+```
+
+### Queue Module
+
+```yaml
+- class: modules::queue::QueueModule
+  config:
+    adapter:
+      class: modules::queue::RedisAdapter
+      config:
+        redis_url: redis://localhost:6379
+```
+
+### Stream Module
+
+```yaml
+- class: modules::stream::StreamModule
+  config:
+    adapter:
+      class: modules::stream::adapters::RedisAdapter
+      config:
+        redis_url: redis://localhost:6379
+```
+
+### State Module
+
+```yaml
+- class: modules::state::StateModule
+  config:
+    adapter:
+      class: modules::state::adapters::FileAdapter
+      config:
+        path: ./data/state
+```
+
+### Cron Module
+
+```yaml
+- class: modules::cron::CronModule
+  # No configuration required
+```
+
+### Observability Module
+
+```yaml
+- class: modules::observability::OtelModule
+  config:
+    endpoint: http://localhost:4317
+    service_name: my-service
+```
+
+## Default Modules
+
+When using `config_file_or_default()` with a missing config file, the following default modules are loaded:
+
+- All modules registered in the inventory with `is_default = true`
+- Modules are loaded with `config: None`
+
+You can check which modules are registered by examining the codebase for `inventory::submit!` macro calls.
+
+## Environment Variable Examples
+
+### Required Variables
+
+```yaml
+modules:
+  - class: modules::queue::QueueModule
+    config:
+      adapter:
+        config:
+          redis_url: ${REDIS_URL}  # Must be set or panics
+```
+
+### Optional with Defaults
+
+```yaml
+port: ${PORT:49134}
+
+modules:
+  - class: modules::observability::OtelModule
+    config:
+      endpoint: ${OTEL_ENDPOINT:http://localhost:4317}
+      service_name: ${SERVICE_NAME:iii-engine}
+```
+
+### Complex URLs
+
+```yaml
+modules:
+  - class: modules::queue::QueueModule
+    config:
+      adapter:
+        config:
+          # Colons in default value work correctly
+          redis_url: ${REDIS_URL:redis://localhost:6379/0}
+```
+
+## Loading Configuration
+
+### From File
+
+```rust
+use iii::EngineBuilder;
+
+EngineBuilder::new()
+    .config_file_or_default("config.yaml")?  // Loads from file or uses defaults
+    .build()
+    .await?
+```
+
+### Programmatically
+
+```rust
+use iii::EngineBuilder;
+use serde_json::json;
+
+EngineBuilder::new()
+    .address("0.0.0.0:8080")
+    .add_module("modules::api::RestApiModule", Some(json!({
+        "port": 3111,
+        "host": "127.0.0.1"
+    })))
+    .build()
+    .await?
+```
+
+## Error Handling
+
+### Parse Errors
+
+```rust
+match EngineConfig::config_file_or_default("config.yaml") {
+    Ok(config) => {
+        // Config loaded successfully
+    }
+    Err(e) => {
+        eprintln!("Failed to load config: {}", e);
+        // Error message includes file path and parse details
+    }
+}
+```
+
+### Missing Environment Variables
+
+```yaml
+# This will panic if REQUIRED_VAR is not set
+modules:
+  - class: modules::custom::Module
+    config:
+      api_key: ${REQUIRED_VAR}
+```
+
+```bash
+# Set before running
+export REQUIRED_VAR=my-secret-key
+./engine -c config.yaml
+```
+
+## Best Practices
+
+<Check>
+  **Use environment variables for secrets**: Never commit API keys, passwords, or tokens to config files
+</Check>
+
+<Check>
+  **Provide sensible defaults**: Use `${VAR:default}` syntax for non-sensitive configuration
+</Check>
+
+<Check>
+  **Document required variables**: List all required environment variables in your README
+</Check>
+
+<Warning>
+  Environment variables without defaults will **panic** if not set. Use defaults for optional configuration.
+</Warning>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="EngineBuilder" icon="wrench" href="/api/engine-builder">
+    Learn about the builder API
+  </Card>
+  <Card title="Modules Overview" icon="puzzle-piece" href="/modules/overview">
+    Available modules and configuration
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/deployment/configuration">
+    Production configuration guide
+  </Card>
+  <Card title="Custom Modules" icon="code" href="/modules/custom-modules">
+    Build custom modules
+  </Card>
+</CardGroup>

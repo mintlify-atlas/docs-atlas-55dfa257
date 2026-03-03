@@ -1,0 +1,240 @@
+---
+title: InvokeFunction
+description: Invoke a registered function
+---
+
+## Request
+
+Invoke a function that has been registered with the framework.
+
+<ParamField name="type" type="string" required>
+  Message type. Must be `"invokefunction"`.
+</ParamField>
+
+<ParamField name="invocation_id" type="string">
+  Optional UUID to track this specific invocation. If not provided, the framework will generate one.
+</ParamField>
+
+<ParamField name="function_id" type="string" required>
+  The ID of the function to invoke. Must match a registered function.
+</ParamField>
+
+<ParamField name="data" type="any" required>
+  The input data to pass to the function. Should conform to the function's `request_format` if specified.
+</ParamField>
+
+<ParamField name="traceparent" type="string">
+  W3C trace-context traceparent header for distributed tracing. Format: `{version}-{trace-id}-{parent-id}-{trace-flags}`.
+</ParamField>
+
+<ParamField name="baggage" type="string">
+  W3C baggage header for cross-cutting context propagation. Format: `key1=value1,key2=value2`.
+</ParamField>
+
+## Response
+
+The framework responds with an `InvocationResult` message.
+
+<ResponseField name="type" type="string">
+  Message type. Will be `"invocationresult"`.
+</ResponseField>
+
+<ResponseField name="invocation_id" type="string" required>
+  UUID that identifies this invocation. Matches the request's `invocation_id` if provided.
+</ResponseField>
+
+<ResponseField name="function_id" type="string" required>
+  The ID of the function that was invoked.
+</ResponseField>
+
+<ResponseField name="result" type="any">
+  The successful result from the function. Omitted if the invocation failed.
+</ResponseField>
+
+<ResponseField name="error" type="object">
+  Error details if the invocation failed. Omitted if successful.
+  
+  <Expandable title="properties">
+    <ResponseField name="code" type="string" required>
+      Machine-readable error code (e.g., `"function_not_found"`, `"timeout"`, `"execution_error"`).
+    </ResponseField>
+    
+    <ResponseField name="message" type="string" required>
+      Human-readable error message describing what went wrong.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="traceparent" type="string">
+  W3C trace-context traceparent header, propagated from the request or generated.
+</ResponseField>
+
+<ResponseField name="baggage" type="string">
+  W3C baggage header, propagated from the request.
+</ResponseField>
+
+## Examples
+
+### Basic Function Invocation
+
+**Request:**
+```json
+{
+  "type": "invokefunction",
+  "function_id": "process_payment",
+  "data": {
+    "amount": 99.99,
+    "currency": "USD"
+  }
+}
+```
+
+**Success Response:**
+```json
+{
+  "type": "invocationresult",
+  "invocation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "function_id": "process_payment",
+  "result": {
+    "transaction_id": "txn_abc123",
+    "status": "completed"
+  }
+}
+```
+
+### Invocation with Custom ID
+
+**Request:**
+```json
+{
+  "type": "invokefunction",
+  "invocation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "function_id": "send_email",
+  "data": {
+    "to": "user@example.com",
+    "subject": "Welcome!",
+    "body": "Thanks for signing up."
+  }
+}
+```
+
+**Success Response:**
+```json
+{
+  "type": "invocationresult",
+  "invocation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "function_id": "send_email",
+  "result": {
+    "message_id": "msg_xyz789",
+    "status": "sent"
+  }
+}
+```
+
+### Invocation with Distributed Tracing
+
+**Request:**
+```json
+{
+  "type": "invokefunction",
+  "function_id": "process_order",
+  "data": {
+    "order_id": "ord_123",
+    "items": [{ "sku": "ITEM-001", "quantity": 2 }]
+  },
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "baggage": "user_id=12345,session_id=abc"
+}
+```
+
+**Success Response:**
+```json
+{
+  "type": "invocationresult",
+  "invocation_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "function_id": "process_order",
+  "result": {
+    "order_status": "confirmed",
+    "estimated_delivery": "2026-03-05"
+  },
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-b7ad6b7169203331-01",
+  "baggage": "user_id=12345,session_id=abc"
+}
+```
+
+## Error Cases
+
+### Function Not Found
+
+**Request:**
+```json
+{
+  "type": "invokefunction",
+  "function_id": "nonexistent_function",
+  "data": {}
+}
+```
+
+**Error Response:**
+```json
+{
+  "type": "invocationresult",
+  "invocation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "function_id": "nonexistent_function",
+  "error": {
+    "code": "function_not_found",
+    "message": "No function registered with ID 'nonexistent_function'"
+  }
+}
+```
+
+### Execution Error
+
+**Request:**
+```json
+{
+  "type": "invokefunction",
+  "function_id": "divide_numbers",
+  "data": {
+    "numerator": 10,
+    "denominator": 0
+  }
+}
+```
+
+**Error Response:**
+```json
+{
+  "type": "invocationresult",
+  "invocation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "function_id": "divide_numbers",
+  "error": {
+    "code": "execution_error",
+    "message": "Division by zero"
+  }
+}
+```
+
+### Timeout Error
+
+**Error Response:**
+```json
+{
+  "type": "invocationresult",
+  "invocation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "function_id": "slow_operation",
+  "error": {
+    "code": "timeout",
+    "message": "Function execution exceeded timeout of 30000ms"
+  }
+}
+```
+
+## Notes
+
+- The `invocation_id` is used to correlate requests with responses
+- If no `invocation_id` is provided, one will be generated automatically
+- The `result` and `error` fields are mutually exclusive - only one will be present
+- For HTTP-based functions, the HTTP response body is returned as the `result`
+- For WebSocket-based functions, the worker must send an `InvocationResult` message
+- Distributed tracing headers follow the [W3C Trace Context](https://www.w3.org/TR/trace-context/) specification

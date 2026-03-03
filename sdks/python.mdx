@@ -1,0 +1,438 @@
+---
+title: "Python SDK"
+description: "Connect to iii from Python applications and register functions and triggers"
+---
+
+## Installation
+
+Install the iii SDK via pip:
+
+```bash
+pip install iii-sdk
+```
+
+## Quick Start
+
+Here's a simple example that creates a function and exposes it via HTTP:
+
+```python
+from iii import III
+import asyncio
+
+iii = III("ws://localhost:49134")
+
+async def add(data):
+    return {"sum": data["a"] + data["b"]}
+
+iii.register_function("math.add", add)
+
+async def main():
+    await iii.connect()
+
+    iii.register_trigger(
+        type="http",
+        function_id="math.add",
+        config={"api_path": "add", "http_method": "POST"}
+    )
+
+    # Keep running
+    await asyncio.Event().wait()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Your function is now live at `http://localhost:3111/add`.
+
+## Connection
+
+### Initialize the SDK
+
+Create an iii client instance:
+
+```python
+from iii import III
+
+iii = III("ws://localhost:49134")
+```
+
+### Connect to the Engine
+
+Establish a WebSocket connection:
+
+```python
+import asyncio
+
+async def main():
+    await iii.connect()
+    # Your code here
+    await iii.disconnect()
+
+asyncio.run(main())
+```
+
+### Environment Variables
+
+Configure the connection URL using environment variables:
+
+```python
+import os
+from iii import III
+
+BRIDGE_URL = os.environ.get("III_BRIDGE_URL", "ws://127.0.0.1:49134")
+iii = III(BRIDGE_URL)
+```
+
+## Registering Functions
+
+### Basic Function Registration
+
+Register an async function with the engine:
+
+```python
+async def greet(data):
+    name = data.get("name", "World")
+    return {"message": f"Hello, {name}!"}
+
+iii.register_function("greet.user", greet)
+```
+
+### Function with Type Hints
+
+Use Python type hints for better code clarity:
+
+```python
+from typing import Dict, Any
+
+async def create_user(data: Dict[str, Any]) -> Dict[str, Any]:
+    # Create user logic
+    user_id = await save_user(data)
+    return {"user_id": user_id, "created": True}
+
+iii.register_function("user.create", create_user)
+```
+
+### Synchronous vs Asynchronous
+
+While the SDK is async-based, you can wrap synchronous code:
+
+```python
+import asyncio
+
+def sync_operation(data):
+    # Synchronous operation
+    return {"result": data["value"] * 2}
+
+async def async_wrapper(data):
+    # Run sync code in executor if needed
+    result = await asyncio.to_thread(sync_operation, data)
+    return result
+
+iii.register_function("sync.operation", async_wrapper)
+```
+
+### Error Handling
+
+Handle errors in your functions:
+
+```python
+async def divide(data):
+    try:
+        a = data["a"]
+        b = data["b"]
+        if b == 0:
+            raise ValueError("Division by zero")
+        return {"result": a / b}
+    except KeyError as e:
+        raise ValueError(f"Missing required field: {e}")
+
+iii.register_function("math.divide", divide)
+```
+
+## Registering Triggers
+
+Triggers must be registered after connecting to the engine.
+
+<Tabs>
+  <Tab title="HTTP">
+    Expose functions as HTTP endpoints:
+
+    ```python
+    await iii.connect()
+
+    iii.register_trigger(
+        type="http",
+        function_id="math.add",
+        config={
+            "api_path": "add",
+            "http_method": "POST"
+        }
+    )
+    ```
+
+    **Configuration options:**
+    - `api_path`: The URL path (e.g., 'add' → `/add`)
+    - `http_method`: HTTP method (GET, POST, PUT, DELETE, PATCH)
+
+    **Dynamic routes:**
+    ```python
+    iii.register_trigger(
+        type="http",
+        function_id="user.get",
+        config={
+            "api_path": "users/:id",
+            "http_method": "GET"
+        }
+    )
+    ```
+  </Tab>
+
+  <Tab title="Queue">
+    Subscribe to queue topics:
+
+    ```python
+    iii.register_trigger(
+        type="queue",
+        function_id="email.send",
+        config={"topic": "notifications"}
+    )
+    ```
+
+    The function will be invoked whenever a message is published to the topic.
+  </Tab>
+
+  <Tab title="Cron">
+    Schedule functions to run on a cron schedule:
+
+    ```python
+    iii.register_trigger(
+        type="cron",
+        function_id="cleanup.daily",
+        config={"schedule": "0 2 * * *"}  # Every day at 2 AM
+    )
+    ```
+
+    Uses standard cron syntax.
+  </Tab>
+
+  <Tab title="Stream">
+    React to real-time state changes:
+
+    ```python
+    iii.register_trigger(
+        type="stream",
+        function_id="handle.update",
+        config={"channel": "user-updates"}
+    )
+    ```
+
+    Functions are invoked when data is streamed to the channel.
+  </Tab>
+</Tabs>
+
+## Invoking Functions
+
+Invoke functions directly from your code:
+
+```python
+# Invoke a function and wait for the result
+result = await iii.invoke("math.add", {"a": 5, "b": 3})
+print(result["sum"])  # 8
+```
+
+### Fire-and-Forget Invocations
+
+Invoke without waiting for a response:
+
+```python
+# Send the invocation and continue immediately
+iii.invoke_async("log.event", {"event": "user_login"})
+```
+
+## Complete Example
+
+Here's a comprehensive example with multiple functions and triggers:
+
+```python
+import asyncio
+import logging
+from iii import III
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
+iii = III("ws://127.0.0.1:49134")
+
+# In-memory storage
+greetings = {}
+
+async def greet_and_save(data):
+    """Greet a user and save the greeting."""
+    name = data.get("name", "World")
+    greeting = f"Hello, {name}!"
+    greetings[name] = greeting
+    return {"greeting": greeting, "saved": True}
+
+async def list_greetings(data):
+    """List all saved greetings."""
+    return {"greetings": greetings}
+
+async def get_greeting(data):
+    """Get a specific greeting by name."""
+    name = data.get("name")
+    greeting = greetings.get(name)
+    if greeting:
+        return {"greeting": greeting}
+    return {"error": "Greeting not found"}
+
+async def delete_greeting(data):
+    """Delete a greeting."""
+    name = data.get("name")
+    if name in greetings:
+        del greetings[name]
+        return {"deleted": True}
+    return {"error": "Greeting not found"}
+
+# Register functions
+iii.register_function("python.greet", greet_and_save)
+iii.register_function("python.list_greetings", list_greetings)
+iii.register_function("python.get_greeting", get_greeting)
+iii.register_function("python.delete_greeting", delete_greeting)
+
+async def main():
+    # Connect to the engine
+    log.info("Connecting to iii engine...")
+    await iii.connect()
+
+    # Register HTTP triggers
+    iii.register_trigger(
+        type="http",
+        function_id="python.greet",
+        config={"api_path": "greet", "http_method": "GET"}
+    )
+
+    iii.register_trigger(
+        type="http",
+        function_id="python.list_greetings",
+        config={"api_path": "greetings", "http_method": "GET"}
+    )
+
+    iii.register_trigger(
+        type="http",
+        function_id="python.get_greeting",
+        config={"api_path": "greetings/:name", "http_method": "GET"}
+    )
+
+    iii.register_trigger(
+        type="http",
+        function_id="python.delete_greeting",
+        config={"api_path": "greetings/:name", "http_method": "DELETE"}
+    )
+
+    log.info("=" * 60)
+    log.info("API Endpoints:")
+    log.info("  GET    /greet?name=X      - Greet and save")
+    log.info("  GET    /greetings         - List all greetings")
+    log.info("  GET    /greetings/:name   - Get specific greeting")
+    log.info("  DELETE /greetings/:name   - Delete greeting")
+    log.info("=" * 60)
+
+    # Keep running
+    log.info("Worker running. Press Ctrl+C to exit...")
+    try:
+        await asyncio.Event().wait()
+    except KeyboardInterrupt:
+        log.info("Shutting down...")
+    finally:
+        await iii.disconnect()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## API Reference
+
+### `III(url: str)`
+
+Create an iii SDK instance.
+
+**Parameters:**
+- `url`: WebSocket URL of the iii engine (default: `ws://localhost:49134`)
+
+**Returns:** SDK instance
+
+### `register_function(function_id: str, handler: Callable)`
+
+Register a function with the engine.
+
+**Parameters:**
+- `function_id`: Unique function identifier
+- `handler`: Async function that receives data dict and returns result dict
+
+### `register_trigger(type: str, function_id: str, config: dict)`
+
+Register a trigger for a function.
+
+**Parameters:**
+- `type`: Trigger type (`http`, `queue`, `cron`, `stream`)
+- `function_id`: ID of the function to invoke
+- `config`: Trigger-specific configuration dict
+
+### `async connect()`
+
+Connect to the iii engine.
+
+### `async disconnect()`
+
+Disconnect from the iii engine.
+
+### `async invoke(function_id: str, data: dict)`
+
+Invoke a function and wait for the result.
+
+**Parameters:**
+- `function_id`: ID of the function to invoke
+- `data`: Input data dictionary
+
+**Returns:** Function result
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use async/await consistently">
+    The SDK is async-first. Always use `async def` for function handlers and `await` for operations.
+  </Accordion>
+
+  <Accordion title="Handle connection lifecycle">
+    Always call `await iii.connect()` before registering triggers and `await iii.disconnect()` when shutting down.
+  </Accordion>
+
+  <Accordion title="Use structured logging">
+    Use Python's logging module for better observability.
+  </Accordion>
+
+  <Accordion title="Type hints for clarity">
+    Use type hints to make your code more maintainable and catch errors early.
+  </Accordion>
+
+  <Accordion title="Graceful shutdown">
+    Handle KeyboardInterrupt and other signals to disconnect cleanly.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Node.js SDK" icon="node-js" href="/sdks/nodejs">
+    Learn about the Node.js SDK
+  </Card>
+  <Card title="Rust SDK" icon="rust" href="/sdks/rust">
+    Learn about the Rust SDK
+  </Card>
+  <Card title="HTTP Module" icon="globe" href="/modules/http">
+    Deep dive into HTTP triggers
+  </Card>
+  <Card title="Queue Module" icon="layer-group" href="/modules/queue">
+    Learn about queue-based triggers
+  </Card>
+</CardGroup>

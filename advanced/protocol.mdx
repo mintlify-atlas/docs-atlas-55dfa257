@@ -1,0 +1,401 @@
+---
+title: WebSocket Protocol
+description: Deep dive into the iii WebSocket message protocol
+---
+
+The iii framework uses WebSocket for bi-directional communication between the engine and workers. All messages are JSON-formatted and follow a tagged union pattern with a `type` field.
+
+## Message Types
+
+All messages are defined in `src/protocol.rs:34`.
+
+### Worker Registration
+
+#### WorkerRegistered
+
+Sent by the engine to confirm worker connection.
+
+```json
+{
+  "type": "workerregistered",
+  "worker_id": "worker-123"
+}
+```
+
+#### RegisterService
+
+Register a service namespace for organizing functions.
+
+```json
+{
+  "type": "registerservice",
+  "id": "my-service",
+  "name": "My Service",
+  "description": "Optional description"
+}
+```
+
+### Function Management
+
+#### RegisterFunction
+
+Register a new function with the engine.
+
+```json
+{
+  "type": "registerfunction",
+  "id": "math.add",
+  "description": "Adds two numbers",
+  "request_format": {
+    "a": { "type": "number" },
+    "b": { "type": "number" }
+  },
+  "response_format": {
+    "sum": { "type": "number" }
+  },
+  "metadata": null,
+  "invocation": null
+}
+```
+
+**Fields:**
+- `id` (required): Unique function identifier
+- `description` (optional): Human-readable description
+- `request_format` (optional): JSON Schema for input validation
+- `response_format` (optional): JSON Schema for output validation
+- `metadata` (optional): Arbitrary metadata for the function
+- `invocation` (optional): HTTP invocation config for external functions (see below)
+
+#### HTTP Invocation Reference
+
+For external HTTP functions, specify the `invocation` field:
+
+```json
+{
+  "type": "registerfunction",
+  "id": "external.my_lambda",
+  "description": "External Lambda function",
+  "invocation": {
+    "url": "https://example.com/lambda",
+    "method": "POST",
+    "timeout_ms": 30000,
+    "headers": {
+      "x-custom-header": "value"
+    },
+    "auth": {
+      "type": "bearer",
+      "token_key": "LAMBDA_TOKEN"
+    }
+  }
+}
+```
+
+**Auth Types** (`src/invocation/auth.rs:13`):
+
+```typescript
+// HMAC signature authentication
+{
+  "type": "hmac",
+  "secret_key": "ENV_VAR_NAME"  // Reference to env var
+}
+
+// Bearer token authentication
+{
+  "type": "bearer",
+  "token_key": "ENV_VAR_NAME"  // Reference to env var
+}
+
+// API key authentication
+{
+  "type": "api_key",
+  "header": "X-API-Key",
+  "value_key": "ENV_VAR_NAME"  // Reference to env var
+}
+```
+
+<Note>
+  Auth configurations reference environment variable names (not values) for security. The engine resolves these at runtime.
+</Note>
+
+#### UnregisterFunction
+
+Remove a function from the engine.
+
+```json
+{
+  "type": "unregisterfunction",
+  "id": "math.add"
+}
+```
+
+### Trigger Management
+
+#### RegisterTriggerType
+
+Register a custom trigger type.
+
+```json
+{
+  "type": "registertriggertype",
+  "id": "custom",
+  "description": "Custom trigger type"
+}
+```
+
+#### RegisterTrigger
+
+Register a trigger to invoke a function.
+
+```json
+{
+  "type": "registertrigger",
+  "id": "add-route",
+  "trigger_type": "http",
+  "function_id": "math.add",
+  "config": {
+    "api_path": "add",
+    "http_method": "POST"
+  }
+}
+```
+
+#### TriggerRegistrationResult
+
+Confirms trigger registration (sent by engine).
+
+```json
+{
+  "type": "triggerregistrationresult",
+  "id": "add-route",
+  "trigger_type": "http",
+  "function_id": "math.add",
+  "error": null
+}
+```
+
+If registration fails:
+
+```json
+{
+  "type": "triggerregistrationresult",
+  "id": "add-route",
+  "trigger_type": "http",
+  "function_id": "math.add",
+  "error": {
+    "code": "function_not_found",
+    "message": "Function 'math.add' not registered"
+  }
+}
+```
+
+#### UnregisterTrigger
+
+Remove a trigger.
+
+```json
+{
+  "type": "unregistertrigger",
+  "id": "add-route",
+  "trigger_type": "http"  // Optional
+}
+```
+
+### Function Invocation
+
+#### InvokeFunction
+
+Invoke a function (sent by engine or worker).
+
+```json
+{
+  "type": "invokefunction",
+  "invocation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "function_id": "math.add",
+  "data": {
+    "a": 5,
+    "b": 3
+  },
+  "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+  "baggage": "user_id=123"
+}
+```
+
+**Fields:**
+- `invocation_id` (optional): UUID for tracking (engine generates if omitted)
+- `function_id` (required): Function to invoke
+- `data` (required): Input data
+- `traceparent` (optional): W3C trace context for distributed tracing
+- `baggage` (optional): W3C baggage for cross-cutting context
+
+#### InvocationResult
+
+Return function result (sent by worker).
+
+**Success:**
+
+```json
+{
+  "type": "invocationresult",
+  "invocation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "function_id": "math.add",
+  "result": {
+    "sum": 8
+  },
+  "error": null,
+  "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+  "baggage": "user_id=123"
+}
+```
+
+**Error:**
+
+```json
+{
+  "type": "invocationresult",
+  "invocation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "function_id": "math.add",
+  "result": null,
+  "error": {
+    "code": "validation_error",
+    "message": "Input must contain 'a' and 'b' fields"
+  }
+}
+```
+
+### Health & Monitoring
+
+#### Ping / Pong
+
+Keep-alive messages.
+
+```json
+{ "type": "ping" }
+{ "type": "pong" }
+```
+
+#### WorkerMetrics
+
+Workers can report resource metrics for monitoring (`src/protocol.rs:123`).
+
+```typescript
+interface WorkerMetrics {
+  // Memory metrics (bytes)
+  memory_heap_used?: number;    // Heap memory used
+  memory_heap_total?: number;   // Total heap allocated
+  memory_rss?: number;          // Resident set size
+  memory_external?: number;     // External memory (e.g., buffers)
+  
+  // CPU metrics
+  cpu_user_micros?: number;     // User CPU time (microseconds)
+  cpu_system_micros?: number;   // System CPU time (microseconds)
+  cpu_percent?: number;         // Current CPU usage percentage
+  
+  // Runtime metrics
+  event_loop_lag_ms?: number;   // Event loop lag (Node.js)
+  uptime_seconds?: number;      // Worker uptime
+  
+  // Metadata
+  timestamp_ms: number;         // Metric timestamp
+  runtime: string;              // "node", "rust", "python", etc.
+}
+```
+
+<Warning>
+  The `u64` fields can exceed JavaScript's `Number.MAX_SAFE_INTEGER` (2^53-1) in extreme cases. For most use cases this is safe, but consider using BigInt for very large values if needed.
+</Warning>
+
+## Error Body Structure
+
+All errors follow this structure (`src/protocol.rs:156`):
+
+```typescript
+interface ErrorBody {
+  code: string;        // Machine-readable error code
+  message: string;     // Human-readable error message
+}
+```
+
+**Common error codes:**
+- `function_not_found`: Function ID not registered
+- `validation_error`: Input validation failed
+- `invocation_timeout`: Function execution timeout
+- `internal_error`: Engine internal error
+- `missing_env_var`: Required environment variable missing (auth)
+
+## Distributed Tracing
+
+iii supports W3C Trace Context for distributed tracing:
+
+- **traceparent**: Trace context propagation header
+  - Format: `version-trace_id-parent_id-trace_flags`
+  - Example: `00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01`
+
+- **baggage**: Cross-cutting context propagation
+  - Format: `key1=value1,key2=value2`
+  - Example: `user_id=123,session_id=abc`
+
+See [OpenTelemetry documentation](https://opentelemetry.io/docs/specs/otel/context/api-propagators/) for more details.
+
+## Best Practices
+
+### Message Ordering
+
+1. **RegisterService** (optional)
+2. **RegisterFunction** (for each function)
+3. **RegisterTrigger** (after function exists)
+4. Wait for **TriggerRegistrationResult**
+5. Handle **InvokeFunction** messages
+6. Send **InvocationResult** responses
+
+### Error Handling
+
+- Always check for `error` field in result messages
+- Implement exponential backoff for reconnections
+- Handle partial failures gracefully
+
+### Performance
+
+- Reuse WebSocket connections
+- Batch trigger registrations when possible
+- Use `invocation_id` for request-response correlation
+- Include distributed tracing headers for observability
+
+### Security
+
+- Never hardcode secrets in message payloads
+- Use environment variable references for auth configs
+- Validate all input data before processing
+- Use TLS for production WebSocket connections
+
+## Example: Complete Flow
+
+```json
+// 1. Worker connects, engine responds
+← {"type": "workerregistered", "worker_id": "w1"}
+
+// 2. Worker registers function
+→ {"type": "registerfunction", "id": "greet", ...}
+
+// 3. Worker registers HTTP trigger
+→ {"type": "registertrigger", "id": "t1", "trigger_type": "http", 
+   "function_id": "greet", "config": {"api_path": "greet"}}
+
+// 4. Engine confirms trigger
+← {"type": "triggerregistrationresult", "id": "t1", 
+   "trigger_type": "http", "function_id": "greet", "error": null}
+
+// 5. HTTP request arrives, engine invokes function
+← {"type": "invokefunction", "invocation_id": "...", 
+   "function_id": "greet", "data": {"name": "Alice"}}
+
+// 6. Worker returns result
+→ {"type": "invocationresult", "invocation_id": "...", 
+   "function_id": "greet", "result": {"message": "Hello, Alice!"}}
+```
+
+## Type Definitions
+
+For full type definitions, see:
+- Protocol messages: `src/protocol.rs`
+- Auth configurations: `src/invocation/auth.rs`
+- HTTP methods: `src/invocation/method.rs`

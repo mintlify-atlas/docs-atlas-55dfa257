@@ -1,0 +1,257 @@
+---
+title: RegisterTrigger
+description: Register a trigger to automatically invoke a function
+---
+
+## Request
+
+Register a trigger that will automatically invoke a function when certain conditions are met.
+
+<ParamField name="type" type="string" required>
+  Message type. Must be `"registertrigger"`.
+</ParamField>
+
+<ParamField name="id" type="string" required>
+  Unique identifier for this trigger instance.
+</ParamField>
+
+<ParamField name="trigger_type" type="string" required>
+  The type of trigger (e.g., `"http"`, `"cron"`, `"queue"`). Must match a registered trigger type.
+</ParamField>
+
+<ParamField name="function_id" type="string" required>
+  The ID of the function to invoke when this trigger fires. Must match a registered function.
+</ParamField>
+
+<ParamField name="config" type="object" required>
+  Trigger-specific configuration. The structure depends on the `trigger_type`.
+  
+  For example, an HTTP trigger might include routing configuration, while a cron trigger would include a schedule expression.
+</ParamField>
+
+## Response
+
+The framework responds with a `TriggerRegistrationResult` message.
+
+<ResponseField name="type" type="string">
+  Message type. Will be `"triggerregistrationresult"`.
+</ResponseField>
+
+<ResponseField name="id" type="string" required>
+  The trigger ID from the request.
+</ResponseField>
+
+<ResponseField name="trigger_type" type="string" required>
+  The trigger type from the request.
+</ResponseField>
+
+<ResponseField name="function_id" type="string" required>
+  The function ID from the request.
+</ResponseField>
+
+<ResponseField name="error" type="object">
+  Error details if registration failed. Omitted if successful.
+  
+  <Expandable title="properties">
+    <ResponseField name="code" type="string" required>
+      Machine-readable error code (e.g., `"trigger_type_not_found"`, `"invalid_config"`, `"function_not_found"`).
+    </ResponseField>
+    
+    <ResponseField name="message" type="string" required>
+      Human-readable error message describing what went wrong.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+### HTTP Trigger Registration
+
+**Request:**
+```json
+{
+  "type": "registertrigger",
+  "id": "http_webhook_handler",
+  "trigger_type": "http",
+  "function_id": "process_webhook",
+  "config": {
+    "path": "/webhooks/github",
+    "method": "POST"
+  }
+}
+```
+
+**Success Response:**
+```json
+{
+  "type": "triggerregistrationresult",
+  "id": "http_webhook_handler",
+  "trigger_type": "http",
+  "function_id": "process_webhook"
+}
+```
+
+### Cron Trigger Registration
+
+**Request:**
+```json
+{
+  "type": "registertrigger",
+  "id": "daily_report",
+  "trigger_type": "cron",
+  "function_id": "generate_report",
+  "config": {
+    "schedule": "0 9 * * *",
+    "timezone": "America/New_York"
+  }
+}
+```
+
+**Success Response:**
+```json
+{
+  "type": "triggerregistrationresult",
+  "id": "daily_report",
+  "trigger_type": "cron",
+  "function_id": "generate_report"
+}
+```
+
+### Queue Trigger Registration
+
+**Request:**
+```json
+{
+  "type": "registertrigger",
+  "id": "email_queue_processor",
+  "trigger_type": "queue",
+  "function_id": "send_email",
+  "config": {
+    "queue_name": "email_queue",
+    "batch_size": 10,
+    "visibility_timeout": 30
+  }
+}
+```
+
+**Success Response:**
+```json
+{
+  "type": "triggerregistrationresult",
+  "id": "email_queue_processor",
+  "trigger_type": "queue",
+  "function_id": "send_email"
+}
+```
+
+## Error Cases
+
+### Trigger Type Not Found
+
+**Request:**
+```json
+{
+  "type": "registertrigger",
+  "id": "my_trigger",
+  "trigger_type": "nonexistent_type",
+  "function_id": "my_function",
+  "config": {}
+}
+```
+
+**Error Response:**
+```json
+{
+  "type": "triggerregistrationresult",
+  "id": "my_trigger",
+  "trigger_type": "nonexistent_type",
+  "function_id": "my_function",
+  "error": {
+    "code": "trigger_type_not_found",
+    "message": "No trigger type registered with ID 'nonexistent_type'"
+  }
+}
+```
+
+### Function Not Found
+
+**Request:**
+```json
+{
+  "type": "registertrigger",
+  "id": "my_trigger",
+  "trigger_type": "http",
+  "function_id": "nonexistent_function",
+  "config": {
+    "path": "/test"
+  }
+}
+```
+
+**Error Response:**
+```json
+{
+  "type": "triggerregistrationresult",
+  "id": "my_trigger",
+  "trigger_type": "http",
+  "function_id": "nonexistent_function",
+  "error": {
+    "code": "function_not_found",
+    "message": "No function registered with ID 'nonexistent_function'"
+  }
+}
+```
+
+### Invalid Configuration
+
+**Request:**
+```json
+{
+  "type": "registertrigger",
+  "id": "cron_trigger",
+  "trigger_type": "cron",
+  "function_id": "my_function",
+  "config": {
+    "schedule": "invalid cron expression"
+  }
+}
+```
+
+**Error Response:**
+```json
+{
+  "type": "triggerregistrationresult",
+  "id": "cron_trigger",
+  "trigger_type": "cron",
+  "function_id": "my_function",
+  "error": {
+    "code": "invalid_config",
+    "message": "Invalid cron expression: 'invalid cron expression'"
+  }
+}
+```
+
+### Duplicate Trigger ID
+
+**Error Response:**
+```json
+{
+  "type": "triggerregistrationresult",
+  "id": "existing_trigger",
+  "trigger_type": "http",
+  "function_id": "my_function",
+  "error": {
+    "code": "duplicate_trigger_id",
+    "message": "A trigger with ID 'existing_trigger' is already registered"
+  }
+}
+```
+
+## Notes
+
+- Trigger IDs must be unique within a worker session
+- The function must be registered before registering a trigger for it
+- The trigger type must be registered (via `RegisterTriggerType`) before use
+- Configuration structure is specific to each trigger type
+- Successful registration returns a result without an `error` field
+- Failed registration returns a result with an `error` field and no exception is thrown

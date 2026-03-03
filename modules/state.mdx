@@ -1,0 +1,538 @@
+---
+title: "State Module"
+description: "Persistent key-value state management with triggers"
+---
+
+The State module provides persistent key-value storage with built-in triggers for reactive state changes. Perfect for application state, user preferences, and cached data.
+
+## Configuration
+
+Configure the State module in `config.yaml`:
+
+```yaml config.yaml
+modules:
+  - class: modules::state::StateModule
+    config:
+      adapter:
+        class: modules::state::adapters::KvStore
+        config:
+          store_method: file_based
+          file_path: ./data/state_store.db
+```
+
+### Configuration Options
+
+<Tabs>
+  <Tab title="KvStore (Default)">
+    File-based persistent storage:
+    
+    ```yaml
+    adapter:
+      class: modules::state::adapters::KvStore
+      config:
+        store_method: file_based
+        file_path: ./data/state_store.db
+    ```
+    
+    Or in-memory (development only):
+    ```yaml
+    adapter:
+      class: modules::state::adapters::KvStore
+      config:
+        store_method: in_memory
+    ```
+  </Tab>
+  
+  <Tab title="Custom Adapter">
+    Implement your own state adapter for databases like PostgreSQL, MongoDB, etc.
+  </Tab>
+</Tabs>
+
+## State Concepts
+
+State is organized by **scope** and **key**:
+
+- **Scope**: Namespace for related data (e.g., 'users', 'config')
+- **Key**: Unique identifier within scope (e.g., 'user_123', 'app_settings')
+
+Example structure:
+```
+users/user_123 → { name: 'Alice', email: 'alice@example.com' }
+config/app → { theme: 'dark', lang: 'en' }
+```
+
+## State Functions
+
+### Set
+
+Store a value in state:
+
+```typescript
+const result = await client.call('state.set', {
+  scope: 'users',
+  key: 'user_123',
+  value: {
+    name: 'Alice',
+    email: 'alice@example.com',
+  },
+});
+
+// Returns:
+// {
+//   old_value: null,           // null if creating
+//   new_value: { name: ... }   // new value
+// }
+```
+
+### Get
+
+Retrieve a value from state:
+
+```typescript
+const user = await client.call('state.get', {
+  scope: 'users',
+  key: 'user_123',
+});
+
+// Returns the stored value or null if not found
+```
+
+### Delete
+
+Remove a value from state:
+
+```typescript
+const deleted = await client.call('state.delete', {
+  scope: 'users',
+  key: 'user_123',
+});
+
+// Returns the deleted value
+```
+
+### Update (Atomic)
+
+Atomically update a value with multiple operations:
+
+```typescript
+import { UpdateOp } from 'iii-sdk';
+
+const result = await client.call('state.update', {
+  scope: 'users',
+  key: 'user_123',
+  ops: [
+    UpdateOp.set('lastLogin', Date.now()),
+    UpdateOp.increment('loginCount', 1),
+    UpdateOp.set('status', 'active'),
+  ],
+});
+
+// Returns:
+// {
+//   old_value: { ... },
+//   new_value: { ... updated ... }
+// }
+```
+
+### List
+
+List all keys in a scope:
+
+```typescript
+const users = await client.call('state.list', {
+  scope: 'users',
+});
+
+// Returns:
+// {
+//   'user_123': { name: 'Alice', ... },
+//   'user_456': { name: 'Bob', ... }
+// }
+```
+
+### List Groups
+
+List all scopes (groups):
+
+```typescript
+const scopes = await client.call('state.list_groups', {});
+
+// Returns:
+// {
+//   groups: ['users', 'config', 'cache']
+// }
+```
+
+## Update Operations
+
+Atomic update operations available:
+
+<CodeGroup>
+```typescript Set Value
+UpdateOp.set('field', value)
+// Sets a field to a specific value
+```
+
+```typescript Increment
+UpdateOp.increment('counter', 1)
+// Increments a numeric field
+```
+
+```typescript Decrement
+UpdateOp.increment('counter', -1)
+// Decrements a numeric field
+```
+
+```typescript Array Push
+UpdateOp.push('items', newItem)
+// Appends to an array
+```
+
+```typescript Delete Field
+UpdateOp.remove('field')
+// Removes a field from object
+```
+</CodeGroup>
+
+## State Triggers
+
+React to state changes automatically:
+
+```typescript index.ts
+export default iii({
+  triggers: {
+    'on-user-update': {
+      type: 'state',
+      config: {
+        scope: 'users',        // Optional: specific scope
+        key: 'user_123',       // Optional: specific key
+      },
+    },
+    'on-config-change': {
+      type: 'state',
+      config: {
+        scope: 'config',
+      },
+    },
+  },
+});
+
+export async function onUserUpdate(event: any) {
+  console.log('User state changed:', event);
+  console.log('Event type:', event.event_type); // 'created', 'updated', or 'deleted'
+  console.log('Old value:', event.old_value);
+  console.log('New value:', event.new_value);
+  
+  if (event.event_type === 'created') {
+    await sendWelcomeEmail(event.new_value);
+  }
+}
+
+export async function onConfigChange(event: any) {
+  console.log('Config changed:', event);
+  // Reload application config
+  await reloadConfig(event.new_value);
+}
+```
+
+## Event Format
+
+State triggers receive events with this structure:
+
+```typescript
+{
+  message_type: 'state';              // Always 'state'
+  event_type: 'created' | 'updated' | 'deleted';
+  scope: string;                      // Scope name
+  key: string;                        // Key name
+  old_value: any | null;              // Previous value (null for create)
+  new_value: any;                     // New value (null for delete)
+}
+```
+
+## Conditional Triggers
+
+Filter state events with conditions:
+
+```typescript
+export default iii({
+  triggers: {
+    'on-user-activated': {
+      type: 'state',
+      config: { scope: 'users' },
+      condition: async (event) => {
+        // Only trigger if status changed to 'active'
+        return (
+          event.event_type === 'updated' &&
+          event.new_value.status === 'active' &&
+          event.old_value.status !== 'active'
+        );
+      },
+    },
+  },
+});
+
+export async function onUserActivated(event: any) {
+  console.log('User activated:', event.new_value.email);
+  await sendActivationEmail(event.new_value);
+}
+```
+
+## Example: User Management
+
+```typescript index.ts
+export default iii({
+  triggers: {
+    'http-create-user': {
+      type: 'http',
+      config: { path: '/users', method: 'POST' },
+    },
+    'http-get-user': {
+      type: 'http',
+      config: { path: '/users/:id', method: 'GET' },
+    },
+    'on-user-created': {
+      type: 'state',
+      config: { scope: 'users' },
+      condition: async (event) => event.event_type === 'created',
+    },
+  },
+});
+
+export async function httpCreateUser(input: any) {
+  const { name, email } = input.body;
+  const userId = Date.now().toString();
+  
+  // Store in state (triggers on-user-created)
+  await client.call('state.set', {
+    scope: 'users',
+    key: userId,
+    value: {
+      id: userId,
+      name,
+      email,
+      createdAt: Date.now(),
+      status: 'pending',
+    },
+  });
+  
+  return { id: userId };
+}
+
+export async function httpGetUser(input: any) {
+  const user = await client.call('state.get', {
+    scope: 'users',
+    key: input.path_params.id,
+  });
+  
+  if (!user) {
+    throw new Error('User not found');
+  }
+  
+  return user;
+}
+
+export async function onUserCreated(event: any) {
+  const user = event.new_value;
+  console.log('New user created:', user.email);
+  
+  // Send welcome email
+  await client.call('queue.enqueue', {
+    topic: 'emails.send',
+    data: {
+      to: user.email,
+      subject: 'Welcome!',
+      template: 'welcome',
+    },
+  });
+  
+  // Update analytics
+  await client.call('state.update', {
+    scope: 'analytics',
+    key: 'user_stats',
+    ops: [
+      UpdateOp.increment('total_users', 1),
+      UpdateOp.set('last_signup', Date.now()),
+    ],
+  });
+}
+```
+
+## Example: Configuration Management
+
+```typescript
+export default iii({
+  triggers: {
+    'http-get-config': {
+      type: 'http',
+      config: { path: '/config/:key', method: 'GET' },
+    },
+    'http-update-config': {
+      type: 'http',
+      config: { path: '/config/:key', method: 'PUT' },
+    },
+    'on-config-update': {
+      type: 'state',
+      config: { scope: 'config' },
+    },
+  },
+});
+
+export async function httpGetConfig(input: any) {
+  return await client.call('state.get', {
+    scope: 'config',
+    key: input.path_params.key,
+  });
+}
+
+export async function httpUpdateConfig(input: any) {
+  await client.call('state.set', {
+    scope: 'config',
+    key: input.path_params.key,
+    value: input.body,
+  });
+  return { success: true };
+}
+
+export async function onConfigUpdate(event: any) {
+  console.log(`Config ${event.key} updated:`, event.new_value);
+  
+  // Broadcast config change to all connected clients
+  await client.call('stream.send', {
+    stream_name: 'system',
+    group_id: 'all',
+    event_type: 'config_updated',
+    data: {
+      key: event.key,
+      value: event.new_value,
+    },
+  });
+}
+```
+
+## Example: Caching with TTL
+
+```typescript
+export default iii({
+  triggers: {
+    'cleanup-cache': {
+      type: 'cron',
+      config: { expression: '*/5 * * * *' }, // Every 5 minutes
+    },
+  },
+});
+
+export async function getOrFetchData(key: string) {
+  // Try to get from cache
+  const cached = await client.call('state.get', {
+    scope: 'cache',
+    key,
+  });
+  
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+  
+  // Fetch fresh data
+  const data = await fetchFromAPI(key);
+  
+  // Store in cache with TTL
+  await client.call('state.set', {
+    scope: 'cache',
+    key,
+    value: {
+      data,
+      expiresAt: Date.now() + 60000, // 1 minute TTL
+    },
+  });
+  
+  return data;
+}
+
+export async function cleanupCache() {
+  const cache = await client.call('state.list', {
+    scope: 'cache',
+  });
+  
+  const now = Date.now();
+  for (const [key, value] of Object.entries(cache)) {
+    if (value.expiresAt < now) {
+      await client.call('state.delete', {
+        scope: 'cache',
+        key,
+      });
+    }
+  }
+}
+```
+
+## Scope Patterns
+
+Recommended scope naming conventions:
+
+- **users** - User profiles and data
+- **config** - Application configuration
+- **cache** - Temporary cached data
+- **sessions** - User session data
+- **analytics** - Analytics counters and stats
+- **features** - Feature flags
+
+## Performance Considerations
+
+- Use **scopes** to organize data logically
+- Use **atomic updates** for concurrent modifications
+- Implement **caching** for frequently accessed data
+- Use **triggers** for async processing instead of synchronous updates
+- Consider **TTL** patterns for temporary data
+
+## Data Persistence
+
+With the KvStore adapter using `file_based` storage:
+
+- Data persists across restarts
+- Stored in the configured `file_path`
+- Automatically saved at intervals (configurable in kv_server module)
+
+```yaml
+modules:
+  - class: modules::kv_server::KvServer
+    config:
+      store_method: file_based
+      file_path: ./data/kv_store
+      save_interval_ms: 5000  # Save every 5 seconds
+```
+
+## Best Practices
+
+1. **Use Scopes**: Organize data into logical scopes
+2. **Atomic Updates**: Use `state.update` for concurrent modifications
+3. **Triggers**: React to changes asynchronously
+4. **Error Handling**: Always handle missing keys gracefully
+5. **TTL Pattern**: Implement expiration for temporary data
+
+## Migration from Other Storage
+
+Migrating from another storage system:
+
+```typescript
+export async function migrateFromOldSystem() {
+  const oldData = await fetchFromOldDatabase();
+  
+  for (const item of oldData) {
+    await client.call('state.set', {
+      scope: 'users',
+      key: item.id,
+      value: item,
+    });
+  }
+  
+  console.log(`Migrated ${oldData.length} records`);
+}
+```
+
+## Source Code Reference
+
+- Module: `src/modules/state/state.rs:36`
+- State functions: `src/modules/state/state.rs:254`
+- Trigger invocation: `src/modules/state/state.rs:110`
+- State adapter trait: `src/modules/state/adapters/mod.rs`

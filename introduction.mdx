@@ -1,0 +1,180 @@
+---
+title: "Introduction to iii"
+description: "Unify your backend stack with a single WebSocket-based orchestration engine and two primitives: Function and Trigger"
+---
+
+# iii: Backend Orchestration Simplified
+
+iii (pronounced "three eye") unifies your existing backend stack with a single engine and two primitives: **Function** and **Trigger**.
+
+No more gluing together separate tools for APIs, queues, cron, state, and real-time communication. iii gives you all of that out of the box.
+
+## Why iii?
+
+<CardGroup cols={2}>
+  <Card title="Single Engine" icon="cube">
+    One orchestration layer for HTTP APIs, queues, cron jobs, state management, and streaming
+  </Card>
+  <Card title="Two Primitives" icon="shapes">
+    Everything deconstructs into Functions (do work) and Triggers (cause work)
+  </Card>
+  <Card title="Any Language" icon="code">
+    Write functions in Node.js, Python, or Rust—or call any HTTP endpoint
+  </Card>
+  <Card title="WebSocket Protocol" icon="bolt">
+    Efficient, persistent connections for instant function invocation and discovery
+  </Card>
+</CardGroup>
+
+## Three Core Concepts
+
+<AccordionGroup>
+  <Accordion title="Function" icon="function">
+    A function is anything that can be called to do work—it receives input and optionally returns output.
+    
+    Functions can:
+    - Exist anywhere: locally, cloud, serverless, or as a 3rd party HTTP endpoint
+    - Mutate state and invoke other functions
+    - Be written in any language with an SDK (Node.js, Python, Rust)
+    - Be automatically discovered and registered without configuration
+    
+    All backend functionality deconstructs into the same function primitive.
+  </Accordion>
+  
+  <Accordion title="Trigger" icon="bolt">
+    A trigger causes a Function to run—either explicitly from code or automatically from an event source.
+    
+    Trigger types include:
+    - **HTTP**: Route requests to functions via REST API
+    - **Queue**: Publish/subscribe with Redis-backed job queues
+    - **Cron**: Scheduled execution with distributed locking
+    - **Stream**: Real-time state sync over WebSocket
+    - **State**: React to state changes automatically
+    
+    Triggers are registered dynamically via the WebSocket protocol.
+  </Accordion>
+  
+  <Accordion title="Discovery" icon="radar">
+    Automatic registration and deregistration of functions and triggers without configuration files.
+    
+    When workers connect:
+    - Functions are registered and become immediately available
+    - Triggers are created and begin listening for events
+    - All functionality is discoverable across the entire backend stack
+    
+    When workers disconnect, their resources are automatically cleaned up.
+  </Accordion>
+</AccordionGroup>
+
+## Architecture Overview
+
+iii uses a modular architecture where each concern is handled by a dedicated module:
+
+<CardGroup cols={3}>
+  <Card title="HTTP Module" icon="globe" href="/modules/http">
+    REST API with dynamic routing
+  </Card>
+  <Card title="Queue Module" icon="list" href="/modules/queue">
+    Pub/sub job processing
+  </Card>
+  <Card title="Cron Module" icon="clock" href="/modules/cron">
+    Distributed scheduling
+  </Card>
+  <Card title="Stream Module" icon="wave-pulse" href="/modules/stream">
+    Real-time WebSocket sync
+  </Card>
+  <Card title="State Module" icon="database" href="/modules/state">
+    Key-value state storage
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/modules/observability">
+    OpenTelemetry metrics & traces
+  </Card>
+</CardGroup>
+
+## Quick Example
+
+Here's how you create a function and expose it via HTTP:
+
+<CodeGroup>
+```javascript Node.js
+import { init } from 'iii-sdk';
+
+const iii = init('ws://localhost:49134');
+
+iii.registerFunction({ id: 'math.add' }, async (input) => {
+  return { sum: input.a + input.b };
+});
+
+iii.registerTrigger({
+  type: 'http',
+  function_id: 'math.add',
+  config: { api_path: 'add', http_method: 'POST' },
+});
+```
+
+```python Python
+from iii import III
+
+iii = III("ws://localhost:49134")
+
+async def add(data):
+    return {"sum": data["a"] + data["b"]}
+
+iii.register_function("math.add", add)
+
+await iii.connect()
+
+iii.register_trigger(
+    type="http",
+    function_id="math.add",
+    config={"api_path": "add", "http_method": "POST"}
+)
+```
+
+```rust Rust
+use iii_sdk::III;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let iii = III::new("ws://127.0.0.1:49134");
+    iii.connect().await?;
+
+    iii.register_function("math.add", |input| async move {
+        let a = input.get("a").and_then(|v| v.as_i64()).unwrap_or(0);
+        let b = input.get("b").and_then(|v| v.as_i64()).unwrap_or(0);
+        Ok(json!({ "sum": a + b }))
+    });
+
+    iii.register_trigger("http", "math.add", json!({
+        "api_path": "add",
+        "http_method": "POST"
+    }))?;
+
+    Ok(())
+}
+```
+</CodeGroup>
+
+Your function is now live at `http://localhost:3111/add`.
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Install the Engine" icon="download" href="/installation">
+    Get iii running on your system in under a minute
+  </Card>
+  <Card title="Build Your First Function" icon="rocket" href="/quickstart">
+    Create a working function with HTTP trigger in 5 minutes
+  </Card>
+  <Card title="Explore Modules" icon="blocks" href="/modules/overview">
+    Learn about HTTP, Queue, Cron, Stream, and State modules
+  </Card>
+  <Card title="Read Core Concepts" icon="book" href="/concepts/functions">
+    Deep dive into Functions, Triggers, and Discovery
+  </Card>
+</CardGroup>
+
+<Note>
+  **Open Source**: iii is licensed under the [Elastic License 2.0](https://github.com/iii-hq/iii/blob/main/LICENSE). Free for most use cases.
+</Note>

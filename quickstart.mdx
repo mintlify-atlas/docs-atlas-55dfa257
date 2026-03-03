@@ -1,80 +1,491 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Build your first iii function with HTTP trigger in under 5 minutes"
 ---
 
-## Get started in three steps
+# Quickstart Guide
 
-Get your documentation site running locally and make your first customization.
+This guide walks you through creating your first iii function and exposing it via HTTP. You'll have a working API endpoint in under 5 minutes.
 
-### Step 1: Set up your local environment
+## Prerequisites
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+- iii engine installed ([installation guide](/installation))
+- Node.js, Python, or Rust development environment
+- Terminal/command line access
+
+## Step 1: Start the Engine
+
+First, start the iii engine on your local machine:
+
+```bash
+iii
+```
+
+You should see output indicating the engine has started:
+
+```
+2024-03-03T10:00:00.123Z  INFO iii: Starting iii engine v0.7.0
+2024-03-03T10:00:00.124Z  INFO iii: WebSocket server listening on 127.0.0.1:49134
+2024-03-03T10:00:00.125Z  INFO iii: HTTP API listening on 127.0.0.1:3111
+```
+
+<Tip>
+  The engine runs on two main ports:
+  - **49134**: WebSocket for worker connections
+  - **3111**: HTTP API for triggering functions
+</Tip>
+
+## Step 2: Install the SDK
+
+Choose your preferred language and install the corresponding SDK:
+
+<CodeGroup>
+```bash Node.js
+npm install iii-sdk
+```
+
+```bash Python
+pip install iii-sdk
+```
+
+```bash Rust
+# Add to Cargo.toml
+[dependencies]
+iii-sdk = "0.3.0"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+```
+</CodeGroup>
+
+## Step 3: Create Your First Function
+
+Now create a simple greeting function that responds via HTTP.
+
+<CodeGroup>
+```javascript app.js
+import { init } from 'iii-sdk';
+
+// Connect to the engine
+const iii = init('ws://localhost:49134');
+
+// Register a greeting function
+iii.registerFunction(
+  { id: 'greet.hello' },
+  async (input) => {
+    const name = input.name || 'World';
+    return {
+      message: `Hello, ${name}!`,
+      timestamp: new Date().toISOString()
+    };
+  }
+);
+
+// Expose it via HTTP POST /greet
+iii.registerTrigger({
+  type: 'http',
+  function_id: 'greet.hello',
+  config: {
+    api_path: 'greet',
+    http_method: 'POST'
+  }
+});
+
+console.log('Function registered! Try:');
+console.log('curl -X POST http://localhost:3111/greet -H "Content-Type: application/json" -d \'{"name":"Alice"}\' ');
+```
+
+```python app.py
+import asyncio
+from iii import III
+from datetime import datetime
+
+# Connect to the engine
+iii = III("ws://localhost:49134")
+
+# Register a greeting function
+async def greet(data):
+    name = data.get("name", "World")
+    return {
+        "message": f"Hello, {name}!",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+iii.register_function("greet.hello", greet)
+
+async def main():
+    # Connect to engine
+    await iii.connect()
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    # Expose via HTTP POST /greet
+    iii.register_trigger(
+        type="http",
+        function_id="greet.hello",
+        config={"api_path": "greet", "http_method": "POST"}
+    )
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    print("Function registered! Try:")
+    print('curl -X POST http://localhost:3111/greet -H "Content-Type: application/json" -d \'{"name":"Alice"}\' ')
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    # Keep worker running
+    while True:
+        await asyncio.sleep(1)
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+if __name__ == "__main__":
+    asyncio.run(main())
+```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+```rust main.rs
+use iii_sdk::III;
+use serde_json::json;
 
-### Step 3: Go live
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Connect to the engine
+    let iii = III::new("ws://127.0.0.1:49134");
+    iii.connect().await?;
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    // Register a greeting function
+    iii.register_function("greet.hello", |input| async move {
+        let name = input
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("World");
+        
+        Ok(json!({
+            "message": format!("Hello, {}!", name),
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        }))
+    });
 
-## Next steps
+    // Expose via HTTP POST /greet
+    iii.register_trigger("http", "greet.hello", json!({
+        "api_path": "greet",
+        "http_method": "POST"
+    }))?;
 
-Now that you have your docs running, explore these key features:
+    println!("Function registered! Try:");
+    println!("curl -X POST http://localhost:3111/greet -H \"Content-Type: application/json\" -d '{{\"name\":\"Alice\"}}'" );
 
-<CardGroup cols={2}>
+    // Keep worker running
+    tokio::signal::ctrl_c().await?;
+    Ok(())
+}
+```
+</CodeGroup>
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+## Step 4: Run Your Worker
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+Execute your worker application:
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+<CodeGroup>
+```bash Node.js
+node app.js
+```
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+```bash Python
+python app.py
+```
 
-</CardGroup>
+```bash Rust
+cargo run
+```
+</CodeGroup>
+
+You should see confirmation that your function is registered and ready.
+
+## Step 5: Test Your Function
+
+Now test your function by calling the HTTP endpoint:
+
+```bash
+curl -X POST http://localhost:3111/greet \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Alice"}'
+```
+
+Expected response:
+```json
+{
+  "message": "Hello, Alice!",
+  "timestamp": "2024-03-03T10:05:30.123Z"
+}
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  The function is automatically discovered and routed by the iii engine. No configuration files or manual registration required!
 </Note>
+
+## Understanding What Happened
+
+Let's break down what you just built:
+
+<Steps>
+  <Step title="Engine Started">
+    The iii engine started and began listening for worker connections on port 49134 and HTTP requests on port 3111.
+  </Step>
+  
+  <Step title="Worker Connected">
+    Your worker application connected to the engine via WebSocket at `ws://localhost:49134`.
+  </Step>
+  
+  <Step title="Function Registered">
+    The `greet.hello` function was registered with the engine using the `registerFunction` SDK method.
+  </Step>
+  
+  <Step title="Trigger Created">
+    An HTTP trigger was created that maps `POST /greet` to the `greet.hello` function.
+  </Step>
+  
+  <Step title="Request Routed">
+    When you called the endpoint, the engine:
+    1. Received the HTTP POST request
+    2. Routed it to the registered worker
+    3. Invoked the `greet.hello` function with the JSON payload
+    4. Returned the function's response as the HTTP response
+  </Step>
+</Steps>
+
+## Next: Add More Functionality
+
+Now that you have a working function, let's add more capabilities.
+
+### Add a Queue Trigger
+
+Process messages asynchronously from a queue:
+
+<CodeGroup>
+```javascript Node.js
+// Register a job processing function
+iii.registerFunction(
+  { id: 'jobs.process' },
+  async (input) => {
+    console.log('Processing job:', input);
+    // Do work here
+    return { status: 'completed', jobId: input.id };
+  }
+);
+
+// Subscribe to queue topic
+iii.registerTrigger({
+  type: 'queue',
+  function_id: 'jobs.process',
+  config: {
+    topic: 'jobs.incoming'
+  }
+});
+
+// Emit a job to the queue
+iii.call('queue.emit', {
+  topic: 'jobs.incoming',
+  data: { id: '123', task: 'send_email' }
+});
+```
+
+```python Python
+# Register a job processing function
+async def process_job(data):
+    print(f"Processing job: {data}")
+    # Do work here
+    return {"status": "completed", "jobId": data.get("id")}
+
+iii.register_function("jobs.process", process_job)
+
+# Subscribe to queue topic
+iii.register_trigger(
+    type="queue",
+    function_id="jobs.process",
+    config={"topic": "jobs.incoming"}
+)
+
+# Emit a job to the queue
+await iii.call("queue.emit", {
+    "topic": "jobs.incoming",
+    "data": {"id": "123", "task": "send_email"}
+})
+```
+
+```rust Rust
+// Register a job processing function
+iii.register_function("jobs.process", |input| async move {
+    println!("Processing job: {:?}", input);
+    // Do work here
+    Ok(json!({
+        "status": "completed",
+        "jobId": input.get("id")
+    }))
+});
+
+// Subscribe to queue topic
+iii.register_trigger("queue", "jobs.process", json!({
+    "topic": "jobs.incoming"
+}))?;
+
+// Emit a job to the queue
+iii.call("queue.emit", json!({
+    "topic": "jobs.incoming",
+    "data": {"id": "123", "task": "send_email"}
+})).await?;
+```
+</CodeGroup>
+
+<Warning>
+  Queue triggers require Redis. Make sure Redis is running at `redis://localhost:6379` or configure a different URL in your config.
+</Warning>
+
+### Add a Cron Trigger
+
+Schedule a function to run periodically:
+
+<CodeGroup>
+```javascript Node.js
+// Register a scheduled task
+iii.registerFunction(
+  { id: 'tasks.cleanup' },
+  async () => {
+    console.log('Running cleanup task...');
+    // Cleanup logic here
+    return { cleaned: true };
+  }
+);
+
+// Run every 5 minutes
+iii.registerTrigger({
+  type: 'cron',
+  function_id: 'tasks.cleanup',
+  config: {
+    schedule: '*/5 * * * *'  // cron syntax
+  }
+});
+```
+
+```python Python
+# Register a scheduled task
+async def cleanup_task():
+    print("Running cleanup task...")
+    # Cleanup logic here
+    return {"cleaned": True}
+
+iii.register_function("tasks.cleanup", cleanup_task)
+
+# Run every 5 minutes
+iii.register_trigger(
+    type="cron",
+    function_id="tasks.cleanup",
+    config={"schedule": "*/5 * * * *"}  # cron syntax
+)
+```
+
+```rust Rust
+// Register a scheduled task
+iii.register_function("tasks.cleanup", |_input| async move {
+    println!("Running cleanup task...");
+    // Cleanup logic here
+    Ok(json!({ "cleaned": true }))
+});
+
+// Run every 5 minutes
+iii.register_trigger("cron", "tasks.cleanup", json!({
+    "schedule": "*/5 * * * *"  // cron syntax
+}))?;
+```
+</CodeGroup>
+
+## Common Patterns
+
+### Invoke Functions from Other Functions
+
+Functions can call each other:
+
+```javascript
+// Call another function
+const result = await iii.call('math.add', { a: 5, b: 3 });
+console.log(result); // { sum: 8 }
+```
+
+### Use Path Parameters
+
+Extract values from URL paths:
+
+```javascript
+iii.registerTrigger({
+  type: 'http',
+  function_id: 'users.get',
+  config: {
+    api_path: 'users/:id',  // :id becomes a parameter
+    http_method: 'GET'
+  }
+});
+
+// Access in function:
+iii.registerFunction({ id: 'users.get' }, async (input) => {
+  const userId = input.id;  // from path parameter
+  return { userId, name: 'Alice' };
+});
+```
+
+### Handle Multiple HTTP Methods
+
+Register different triggers for the same function:
+
+```javascript
+iii.registerTrigger({
+  type: 'http',
+  function_id: 'items.list',
+  config: { api_path: 'items', http_method: 'GET' }
+});
+
+iii.registerTrigger({
+  type: 'http',
+  function_id: 'items.create',
+  config: { api_path: 'items', http_method: 'POST' }
+});
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Worker won't connect to engine">
+    - Ensure the engine is running (`iii` command)
+    - Verify the WebSocket URL is correct: `ws://localhost:49134`
+    - Check firewall settings aren't blocking port 49134
+  </Accordion>
+  
+  <Accordion title="HTTP requests return 404">
+    - Confirm the trigger was registered successfully
+    - Check the `api_path` matches your request URL
+    - Verify the worker is still connected (check engine logs)
+  </Accordion>
+  
+  <Accordion title="Queue or Cron triggers don't work">
+    - These modules require Redis running at `redis://localhost:6379`
+    - Start Redis: `docker run -p 6379:6379 redis:7-alpine`
+    - Or configure a different Redis URL in `config.yaml`
+  </Accordion>
+  
+  <Accordion title="Function errors aren't showing">
+    - Check worker console for error messages
+    - Enable debug logging: `RUST_LOG=debug iii`
+    - Functions should return errors in the format: `{ error: { code: 'ERR_CODE', message: 'Description' } }`
+  </Accordion>
+</AccordionGroup>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book" href="/concepts/functions">
+    Learn about Functions, Triggers, and Discovery in depth
+  </Card>
+  <Card title="Explore Modules" icon="blocks" href="/modules/overview">
+    Discover all available modules: HTTP, Queue, Cron, Stream, State
+  </Card>
+  <Card title="SDK Reference" icon="code" href="/sdks/nodejs">
+    Dive into SDK documentation for your language
+  </Card>
+  <Card title="Deploy to Production" icon="rocket" href="/deployment/production">
+    Learn best practices for production deployments
+  </Card>
+</CardGroup>
+
+<Tip>
+  **Pro tip**: Use environment variables in your config for different environments. See the [Configuration guide](/deployment/configuration) for details.
+</Tip>

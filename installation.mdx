@@ -1,0 +1,263 @@
+---
+title: "Installation"
+description: "Install the iii engine using curl, Docker, or build from source"
+---
+
+# Installing iii
+
+iii runs as a single binary that orchestrates your backend functions and triggers. Choose your preferred installation method below.
+
+## Quick Install (Recommended)
+
+The fastest way to get started is with the installation script:
+
+<CodeGroup>
+```bash Default
+curl -fsSL https://install.iii.dev/iii/main/install.sh | sh
+```
+
+```bash Custom Directory
+curl -fsSL https://install.iii.dev/iii/main/install.sh | BIN_DIR=$HOME/.local/bin sh
+```
+
+```bash Specific Version
+curl -fsSL https://install.iii.dev/iii/main/install.sh | sh -s -- v0.6.3
+```
+</CodeGroup>
+
+<Tip>
+  The installation script automatically detects your platform (Linux, macOS, Windows) and architecture (x86_64, ARM64).
+</Tip>
+
+### Verify Installation
+
+After installation, verify that iii is available:
+
+```bash
+command -v iii && iii --version
+```
+
+Expected output:
+```
+/usr/local/bin/iii
+iii v0.7.0
+```
+
+## Docker Installation
+
+iii is available as a Docker image for containerized deployments.
+
+### Pull the Image
+
+```bash
+docker pull iiidev/iii:latest
+```
+
+### Run with Docker
+
+<Steps>
+  <Step title="Create a config file (optional)">
+    If you need custom module configuration, create a `config.yaml` file:
+    
+    ```yaml config.yaml
+    modules:
+      - class: modules::rest_api::RestApiCoreModule
+        config:
+          host: 0.0.0.0
+          port: 3111
+      - class: modules::observability::OtelModule
+        config:
+          enabled: true
+          level: info
+    ```
+  </Step>
+  
+  <Step title="Run the container">
+    ```bash
+    docker run -p 3111:3111 -p 49134:49134 \
+      -v ./config.yaml:/app/config.yaml:ro \
+      iiidev/iii:latest
+    ```
+    
+    <Note>
+      If you don't provide a config file, iii loads default modules: HTTP, Queue, Cron, Stream, and Observability.
+    </Note>
+  </Step>
+  
+  <Step title="Verify the engine is running">
+    The engine exposes several ports:
+    
+    | Port  | Service                        |
+    | ----- | ------------------------------ |
+    | 49134 | WebSocket (worker connections) |
+    | 3111  | HTTP API                       |
+    | 3112  | Stream API                     |
+    | 9464  | Prometheus metrics             |
+  </Step>
+</Steps>
+
+### Production Docker Deployment
+
+For production environments, use a hardened configuration:
+
+```bash
+docker run --read-only --tmpfs /tmp \
+  --cap-drop=ALL --cap-add=NET_BIND_SERVICE \
+  --security-opt=no-new-privileges:true \
+  -v ./config.yaml:/app/config.yaml:ro \
+  -p 3111:3111 -p 49134:49134 -p 3112:3112 -p 9464:9464 \
+  iiidev/iii:latest
+```
+
+<Warning>
+  Production images use distroless runtime (no shell, minimal attack surface) and run as non-root user.
+</Warning>
+
+## Docker Compose
+
+For a complete stack with Redis and RabbitMQ:
+
+<Steps>
+  <Step title="Create docker-compose.yml">
+    ```yaml docker-compose.yml
+    services:
+      iii:
+        image: iiidev/iii:latest
+        ports:
+          - "49134:49134"  # WebSocket
+          - "3111:3111"    # REST API
+          - "3112:3112"    # Stream API
+          - "9464:9464"    # Metrics
+        volumes:
+          - ./config.yaml:/app/config.yaml:ro
+        environment:
+          - RUST_LOG=info
+        depends_on:
+          redis:
+            condition: service_healthy
+        restart: unless-stopped
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6379:6379"
+        volumes:
+          - redis_data:/data
+        healthcheck:
+          test: ["CMD", "redis-cli", "ping"]
+          interval: 5s
+          timeout: 3s
+          retries: 5
+        restart: unless-stopped
+
+    volumes:
+      redis_data:
+    ```
+  </Step>
+  
+  <Step title="Start the stack">
+    ```bash
+    docker compose up -d
+    ```
+  </Step>
+  
+  <Step title="Check status">
+    ```bash
+    docker compose ps
+    docker compose logs iii
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  Queue and Stream modules require Redis at `redis://localhost:6379` by default. Override with environment variables in your config.
+</Tip>
+
+## Build from Source
+
+For development or custom builds:
+
+<Steps>
+  <Step title="Install Rust toolchain">
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    ```
+  </Step>
+  
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/iii-hq/iii.git
+    cd iii
+    ```
+  </Step>
+  
+  <Step title="Build the binary">
+    ```bash
+    cargo build --release
+    ```
+    
+    The binary will be at `target/release/iii`.
+  </Step>
+  
+  <Step title="Run the engine">
+    ```bash
+    cargo run
+    # Or with config:
+    cargo run -- --config config.yaml
+    ```
+  </Step>
+</Steps>
+
+### Development Commands
+
+```bash
+# Watch mode (requires cargo-watch)
+make watch
+
+# Lint and format
+cargo fmt && cargo clippy -- -D warnings
+
+# Run tests
+cargo test
+
+# Build Docker images locally
+docker build -t iii:local .                        # production
+docker build -f Dockerfile.debug -t iii:debug .    # debug
+```
+
+## Environment Configuration
+
+iii supports environment variable expansion in config files:
+
+```yaml config.yaml
+modules:
+  - class: modules::queue::QueueModule
+    config:
+      adapter:
+        class: modules::queue::RedisAdapter
+        config:
+          redis_url: ${REDIS_URL:redis://localhost:6379}
+```
+
+The syntax `${VAR:default}` reads from environment or uses the default value.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Start the Engine" icon="power-off" href="/quickstart#start-the-engine">
+    Learn how to start iii and connect your first worker
+  </Card>
+  <Card title="Install an SDK" icon="download" href="/sdks/nodejs">
+    Install the Node.js, Python, or Rust SDK to write functions
+  </Card>
+  <Card title="Configure Modules" icon="sliders" href="/deployment/configuration">
+    Customize HTTP, Queue, Cron, Stream, and other modules
+  </Card>
+  <Card title="Production Setup" icon="shield" href="/deployment/production">
+    Hardening, monitoring, and scaling for production
+  </Card>
+</CardGroup>
+
+<Note>
+  **Default Modules**: Without a config file, iii loads HTTP, Queue, Cron, Stream, and Observability modules. Queue and Stream expect Redis at `redis://localhost:6379`.
+</Note>

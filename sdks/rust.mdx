@@ -1,0 +1,473 @@
+---
+title: "Rust SDK"
+description: "Connect to iii from Rust applications and register functions and triggers"
+---
+
+## Installation
+
+Add the iii SDK to your `Cargo.toml`:
+
+```toml
+[dependencies]
+iii-sdk = "*"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+```
+
+## Quick Start
+
+Here's a simple example that creates a function and exposes it via HTTP:
+
+```rust
+use iii_sdk::III;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let iii = III::new("ws://127.0.0.1:49134");
+    iii.connect().await?;
+
+    iii.register_function("math.add", |input| async move {
+        let a = input.get("a").and_then(|v| v.as_i64()).unwrap_or(0);
+        let b = input.get("b").and_then(|v| v.as_i64()).unwrap_or(0);
+        Ok(json!({ "sum": a + b }))
+    });
+
+    iii.register_trigger("http", "math.add", json!({
+        "api_path": "add",
+        "http_method": "POST"
+    }))?;
+
+    Ok(())
+}
+```
+
+Your function is now live at `http://localhost:3111/add`.
+
+## Connection
+
+### Initialize the SDK
+
+Create an iii client instance:
+
+```rust
+use iii_sdk::III;
+
+let iii = III::new("ws://127.0.0.1:49134");
+```
+
+### Connect to the Engine
+
+Establish a WebSocket connection:
+
+```rust
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let iii = III::new("ws://127.0.0.1:49134");
+    iii.connect().await?;
+    
+    // Your code here
+    
+    Ok(())
+}
+```
+
+### Environment Variables
+
+Configure the connection URL using environment variables:
+
+```rust
+use std::env;
+
+let url = env::var("III_ENGINE_URL")
+    .unwrap_or_else(|_| "ws://127.0.0.1:49134".to_string());
+let iii = III::new(&url);
+```
+
+## Registering Functions
+
+### Basic Function Registration
+
+Register a function using a closure:
+
+```rust
+use serde_json::json;
+
+iii.register_function("greet.user", |input| async move {
+    let name = input.get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("World");
+    Ok(json!({ "message": format!("Hello, {}!", name) }))
+});
+```
+
+### Function with Error Handling
+
+Handle errors explicitly:
+
+```rust
+use serde_json::json;
+
+iii.register_function("divide", |input| async move {
+    let a = input.get("a")
+        .and_then(|v| v.as_f64())
+        .ok_or("Missing field 'a'")?;
+    let b = input.get("b")
+        .and_then(|v| v.as_f64())
+        .ok_or("Missing field 'b'")?;
+    
+    if b == 0.0 {
+        return Err("Division by zero".into());
+    }
+    
+    Ok(json!({ "result": a / b }))
+});
+```
+
+### Structured Input/Output
+
+Use serde for type-safe data handling:
+
+```rust
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+#[derive(Deserialize)]
+struct UserInput {
+    name: String,
+    email: String,
+}
+
+#[derive(Serialize)]
+struct UserOutput {
+    user_id: u64,
+    created: bool,
+}
+
+iii.register_function("user.create", |input| async move {
+    let user_input: UserInput = serde_json::from_value(input)?;
+    
+    // Create user logic
+    let user_id = create_user(&user_input.name, &user_input.email).await?;
+    
+    Ok(serde_json::to_value(UserOutput {
+        user_id,
+        created: true,
+    })?)
+});
+```
+
+### Async Operations
+
+Perform async operations within functions:
+
+```rust
+use serde_json::json;
+
+iii.register_function("data.fetch", |input| async move {
+    let url = input.get("url")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing URL")?;
+    
+    let response = reqwest::get(url).await?;
+    let data: serde_json::Value = response.json().await?;
+    
+    Ok(json!({ "data": data }))
+});
+```
+
+### Shared State
+
+Use Arc for shared state across function invocations:
+
+```rust
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use std::collections::HashMap;
+use serde_json::json;
+
+let storage: Arc<RwLock<HashMap<String, String>>> = 
+    Arc::new(RwLock::new(HashMap::new()));
+
+let storage_clone = storage.clone();
+iii.register_function("storage.set", move |input| {
+    let storage = storage_clone.clone();
+    async move {
+        let key = input.get("key").and_then(|v| v.as_str()).ok_or("Missing key")?;
+        let value = input.get("value").and_then(|v| v.as_str()).ok_or("Missing value")?;
+        
+        storage.write().await.insert(key.to_string(), value.to_string());
+        Ok(json!({ "stored": true }))
+    }
+});
+
+let storage_clone = storage.clone();
+iii.register_function("storage.get", move |input| {
+    let storage = storage_clone.clone();
+    async move {
+        let key = input.get("key").and_then(|v| v.as_str()).ok_or("Missing key")?;
+        let value = storage.read().await.get(key).cloned();
+        Ok(json!({ "value": value }))
+    }
+});
+```
+
+## Registering Triggers
+
+Register triggers after connecting to the engine.
+
+<Tabs>
+  <Tab title="HTTP">
+    Expose functions as HTTP endpoints:
+
+    ```rust
+    use serde_json::json;
+
+    iii.register_trigger("http", "math.add", json!({
+        "api_path": "add",
+        "http_method": "POST"
+    }))?;
+    ```
+
+    **Configuration options:**
+    - `api_path`: The URL path (e.g., 'add' → `/add`)
+    - `http_method`: HTTP method (GET, POST, PUT, DELETE, PATCH)
+
+    **Dynamic routes:**
+    ```rust
+    iii.register_trigger("http", "user.get", json!({
+        "api_path": "users/:id",
+        "http_method": "GET"
+    }))?;
+    ```
+  </Tab>
+
+  <Tab title="Queue">
+    Subscribe to queue topics:
+
+    ```rust
+    iii.register_trigger("queue", "email.send", json!({
+        "topic": "notifications"
+    }))?;
+    ```
+
+    The function will be invoked whenever a message is published to the topic.
+  </Tab>
+
+  <Tab title="Cron">
+    Schedule functions to run on a cron schedule:
+
+    ```rust
+    iii.register_trigger("cron", "cleanup.daily", json!({
+        "schedule": "0 2 * * *"  // Every day at 2 AM
+    }))?;
+    ```
+
+    Uses standard cron syntax.
+  </Tab>
+
+  <Tab title="Stream">
+    React to real-time state changes:
+
+    ```rust
+    iii.register_trigger("stream", "handle.update", json!({
+        "channel": "user-updates"
+    }))?;
+    ```
+
+    Functions are invoked when data is streamed to the channel.
+  </Tab>
+</Tabs>
+
+## Invoking Functions
+
+Invoke functions directly from your code:
+
+```rust
+use serde_json::json;
+
+// Invoke a function and wait for the result
+let result = iii.invoke("math.add", json!({ "a": 5, "b": 3 })).await?;
+println!("Sum: {}", result["sum"]);
+```
+
+### Fire-and-Forget Invocations
+
+Invoke without waiting for a response:
+
+```rust
+iii.invoke_async("log.event", json!({ "event": "user_login" }))?;
+```
+
+## Complete Example
+
+Here's a comprehensive example with multiple functions and triggers:
+
+```rust
+use iii_sdk::III;
+use serde_json::json;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize SDK and connect
+    let iii = III::new("ws://127.0.0.1:49134");
+    iii.connect().await?;
+
+    // Shared storage
+    let greetings: Arc<RwLock<HashMap<String, String>>> = 
+        Arc::new(RwLock::new(HashMap::new()));
+
+    // Register greet function
+    let greetings_clone = greetings.clone();
+    iii.register_function("greet", move |input| {
+        let greetings = greetings_clone.clone();
+        async move {
+            let name = input.get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("World");
+            let greeting = format!("Hello, {}!", name);
+            
+            greetings.write().await.insert(name.to_string(), greeting.clone());
+            
+            Ok(json!({
+                "greeting": greeting,
+                "saved": true
+            }))
+        }
+    });
+
+    // Register list function
+    let greetings_clone = greetings.clone();
+    iii.register_function("list_greetings", move |_input| {
+        let greetings = greetings_clone.clone();
+        async move {
+            let greetings_map = greetings.read().await;
+            Ok(json!({ "greetings": *greetings_map }))
+        }
+    });
+
+    // Register HTTP triggers
+    iii.register_trigger("http", "greet", json!({
+        "api_path": "greet",
+        "http_method": "GET"
+    }))?;
+
+    iii.register_trigger("http", "list_greetings", json!({
+        "api_path": "greetings",
+        "http_method": "GET"
+    }))?;
+
+    // Register a cron job
+    iii.register_function("cleanup", move |_input| async move {
+        println!("Running cleanup...");
+        // Cleanup logic
+        Ok(json!({ "cleaned": true }))
+    });
+
+    iii.register_trigger("cron", "cleanup", json!({
+        "schedule": "0 0 * * *"
+    }))?;
+
+    println!("Worker connected and ready!");
+    println!("Endpoints:");
+    println!("  GET /greet?name=X");
+    println!("  GET /greetings");
+
+    // Keep running
+    tokio::signal::ctrl_c().await?;
+    println!("Shutting down...");
+
+    Ok(())
+}
+```
+
+## API Reference
+
+### `III::new(url: &str)`
+
+Create a new iii SDK instance.
+
+**Parameters:**
+- `url`: WebSocket URL of the iii engine
+
+**Returns:** SDK instance
+
+### `async connect(&self)`
+
+Connect to the iii engine.
+
+**Returns:** `Result<(), Error>`
+
+### `register_function<F, Fut>(function_id: &str, handler: F)`
+
+Register a function with the engine.
+
+**Parameters:**
+- `function_id`: Unique function identifier
+- `handler`: Async closure that receives `serde_json::Value` and returns `Result<serde_json::Value, Error>`
+
+### `register_trigger(type: &str, function_id: &str, config: serde_json::Value)`
+
+Register a trigger for a function.
+
+**Parameters:**
+- `type`: Trigger type (`http`, `queue`, `cron`, `stream`)
+- `function_id`: ID of the function to invoke
+- `config`: Trigger-specific configuration
+
+**Returns:** `Result<(), Error>`
+
+### `async invoke(function_id: &str, input: serde_json::Value)`
+
+Invoke a function and wait for the result.
+
+**Parameters:**
+- `function_id`: ID of the function to invoke
+- `input`: Input data
+
+**Returns:** `Result<serde_json::Value, Error>`
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Arc and async-aware locks">
+    For shared state, use `Arc<RwLock<T>>` from tokio to enable concurrent access.
+  </Accordion>
+
+  <Accordion title="Leverage the type system">
+    Use serde's Serialize/Deserialize traits for type-safe input/output handling.
+  </Accordion>
+
+  <Accordion title="Handle errors with Result">
+    Return `Result` types from your functions to handle errors gracefully.
+  </Accordion>
+
+  <Accordion title="Clone Arc references, not data">
+    When passing shared state to closures, clone the Arc, not the underlying data.
+  </Accordion>
+
+  <Accordion title="Use tokio::spawn for background tasks">
+    Spawn background tasks using `tokio::spawn` when needed.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Node.js SDK" icon="node-js" href="/sdks/nodejs">
+    Learn about the Node.js SDK
+  </Card>
+  <Card title="Python SDK" icon="python" href="/sdks/python">
+    Learn about the Python SDK
+  </Card>
+  <Card title="HTTP Module" icon="globe" href="/modules/http">
+    Deep dive into HTTP triggers
+  </Card>
+  <Card title="Custom Adapters" icon="puzzle-piece" href="/advanced/custom-adapters">
+    Build custom adapters in Rust
+  </Card>
+</CardGroup>

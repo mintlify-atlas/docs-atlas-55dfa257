@@ -1,0 +1,348 @@
+---
+title: Docker
+description: Run iii in Docker containers
+---
+
+iii provides official Docker images for production and development use. Images are multi-stage builds optimized for security and size.
+
+## Quick Start
+
+Pull and run the latest image:
+
+```bash
+docker pull iiidev/iii:latest
+
+docker run -p 3111:3111 -p 49134:49134 \
+  -v ./config.yaml:/app/config.yaml:ro \
+  iiidev/iii:latest
+```
+
+## Exposed Ports
+
+iii exposes four ports:
+
+| Port | Service | Description |
+|------|---------|-------------|
+| **49134** | WebSocket | Worker connections (SDK clients) |
+| **3111** | HTTP API | REST API endpoints |
+| **3112** | Stream API | Real-time WebSocket streams |
+| **9464** | Metrics | Prometheus metrics endpoint |
+
+**Expose all ports:**
+
+```bash
+docker run \
+  -p 49134:49134 \
+  -p 3111:3111 \
+  -p 3112:3112 \
+  -p 9464:9464 \
+  -v ./config.yaml:/app/config.yaml:ro \
+  iiidev/iii:latest
+```
+
+## Configuration
+
+Mount your config file as read-only:
+
+```bash
+docker run \
+  -v ./config.yaml:/app/config.yaml:ro \
+  -p 3111:3111 -p 49134:49134 \
+  iiidev/iii:latest
+```
+
+The default entrypoint is:
+
+```dockerfile
+ENTRYPOINT ["/app/iii"]
+CMD ["--config", "/app/config.yaml"]
+```
+
+**Override config path:**
+
+```bash
+docker run \
+  -v ./custom.yaml:/etc/iii/config.yaml:ro \
+  iiidev/iii:latest --config /etc/iii/config.yaml
+```
+
+## Environment Variables
+
+Pass environment variables for dynamic configuration:
+
+```bash
+docker run \
+  -e RUST_LOG=info \
+  -e REDIS_URL=redis://redis:6379 \
+  -e OTEL_ENABLED=true \
+  -v ./config.yaml:/app/config.yaml:ro \
+  -p 3111:3111 -p 49134:49134 \
+  iiidev/iii:latest
+```
+
+**Common variables:**
+
+- `RUST_LOG` - Logging level (info, debug, trace)
+- `REDIS_URL` - Redis connection URL
+- `OTEL_ENABLED` - Enable OpenTelemetry
+- `STREAM_PORT` - Stream API port
+- `SERVICE_VERSION` - Service version for telemetry
+
+## Docker Compose
+
+iii includes a `docker-compose.yml` for running the full stack with Redis and RabbitMQ.
+
+### Development Stack
+
+```yaml docker-compose.yml
+services:
+  iii:
+    image: iiidev/iii:latest
+    ports:
+      - "49134:49134"  # WebSocket (worker connections)
+      - "3111:3111"    # REST API
+      - "3112:3112"    # Stream API
+      - "9464:9464"    # Prometheus metrics
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - RUST_LOG=info
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASS:-guest}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  rabbitmq_data:
+```
+
+**Start the stack:**
+
+```bash
+docker compose up -d
+```
+
+**View logs:**
+
+```bash
+docker compose logs -f iii
+```
+
+**Stop the stack:**
+
+```bash
+docker compose down
+```
+
+### Build from Source
+
+To build iii locally instead of using the published image:
+
+```yaml
+services:
+  iii:
+    build: .
+    # image: iiidev/iii:latest  # Comment out
+    ports:
+      - "49134:49134"
+      - "3111:3111"
+```
+
+## Dockerfile Structure
+
+iii provides two Dockerfiles:
+
+### Production (Distroless)
+
+`Dockerfile` - Minimal attack surface, no shell, non-root user:
+
+```dockerfile
+FROM rust:slim-bookworm AS chef
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && cargo install cargo-chef
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /build/recipe.json recipe.json
+COPY Cargo.toml Cargo.lock ./
+COPY function-macros ./function-macros
+RUN cargo chef cook --release --recipe-path recipe.json
+COPY . .
+RUN cargo build --release && strip target/release/iii
+
+FROM gcr.io/distroless/cc-debian12:nonroot
+
+COPY --from=builder /build/target/release/iii /app/iii
+
+EXPOSE 49134 3111 3112 9464
+ENTRYPOINT ["/app/iii"]
+CMD ["--config", "/app/config.yaml"]
+```
+
+**Features:**
+- Distroless base (no shell, minimal packages)
+- Non-root user execution
+- Multi-stage build for smaller images
+- Cargo chef for layer caching
+
+### Debug (Debian + Shell)
+
+`Dockerfile.debug` - Includes shell and debugging tools:
+
+```dockerfile
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl procps net-tools htop vim-tiny \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --system --create-home --shell /bin/bash iii
+
+WORKDIR /app
+COPY --from=builder --chown=iii:iii /build/target/release/iii /app/iii
+USER iii
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -sf http://localhost:3111/health || /app/iii --version
+
+EXPOSE 49134 3111 3112 9464
+ENTRYPOINT ["/app/iii"]
+CMD ["--config", "/app/config.yaml"]
+```
+
+**Build debug image:**
+
+```bash
+docker build -f Dockerfile.debug -t iii:debug .
+```
+
+## Building Locally
+
+**Production image:**
+
+```bash
+docker build -t iii:local .
+```
+
+**Debug image:**
+
+```bash
+docker build -f Dockerfile.debug -t iii:debug .
+```
+
+**Run local build:**
+
+```bash
+docker run -p 3111:3111 -p 49134:49134 \
+  -v ./config.yaml:/app/config.yaml:ro \
+  iii:local
+```
+
+## Volumes
+
+Mount volumes for persistent data:
+
+```bash
+docker run \
+  -v ./config.yaml:/app/config.yaml:ro \
+  -v ./data:/data \
+  -p 3111:3111 -p 49134:49134 \
+  iiidev/iii:latest
+```
+
+**Recommended mounts:**
+
+- `/app/config.yaml` - Configuration file (read-only)
+- `/data` - State storage directory
+- `/tmp` - Temporary files (use tmpfs for performance)
+
+## Security
+
+The production image follows security best practices:
+
+<AccordionGroup>
+  <Accordion title="Non-root user">
+    Runs as `nonroot` user (UID 65532) in distroless base
+  </Accordion>
+  
+  <Accordion title="Read-only filesystem">
+    Run with `--read-only` flag and tmpfs for /tmp:
+    
+    ```bash
+    docker run --read-only --tmpfs /tmp \
+      -v ./config.yaml:/app/config.yaml:ro \
+      iiidev/iii:latest
+    ```
+  </Accordion>
+  
+  <Accordion title="Dropped capabilities">
+    Drop all capabilities except NET_BIND_SERVICE:
+    
+    ```bash
+    docker run --cap-drop=ALL --cap-add=NET_BIND_SERVICE \
+      iiidev/iii:latest
+    ```
+  </Accordion>
+  
+  <Accordion title="No new privileges">
+    Prevent privilege escalation:
+    
+    ```bash
+    docker run --security-opt=no-new-privileges:true \
+      iiidev/iii:latest
+    ```
+  </Accordion>
+</AccordionGroup>
+
+See [Production Deployment](/deployment/production) for hardened setup.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/deployment/configuration">
+    Configure modules and environment
+  </Card>
+  <Card title="Production" icon="server" href="/deployment/production">
+    Production deployment guide
+  </Card>
+</CardGroup>
