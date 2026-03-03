@@ -1,0 +1,129 @@
+{
+  "projectType": "framework",
+  "projectName": "iii",
+  "projectDescription": "A WebSocket-based backend orchestration framework that unifies APIs, queues, cron, state, and real-time communication with Functions and Triggers",
+  "theme": "aspen",
+  "primaryColor": "#6366f1",
+  "lightColor": "#818cf8",
+  "darkColor": "#4f46e5",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/functions",
+              "concepts/triggers",
+              "concepts/discovery",
+              "concepts/architecture"
+            ]
+          },
+          {
+            "group": "Modules",
+            "pages": [
+              "modules/overview",
+              "modules/http",
+              "modules/queue",
+              "modules/cron",
+              "modules/stream",
+              "modules/state",
+              "modules/observability",
+              "modules/custom-modules"
+            ]
+          },
+          {
+            "group": "SDKs",
+            "pages": [
+              "sdks/nodejs",
+              "sdks/python",
+              "sdks/rust"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/configuration",
+              "deployment/docker",
+              "deployment/production"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/protocol",
+              "advanced/custom-adapters",
+              "advanced/monitoring",
+              "advanced/security"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Engine API",
+            "pages": [
+              "api/engine-builder",
+              "api/configuration"
+            ]
+          },
+          {
+            "group": "Protocol Messages",
+            "pages": [
+              "api/messages/register-function",
+              "api/messages/invoke-function",
+              "api/messages/register-trigger",
+              "api/messages/unregister-trigger"
+            ]
+          },
+          {
+            "group": "Module Traits",
+            "pages": [
+              "api/traits/module",
+              "api/traits/queue-adapter",
+              "api/traits/stream-adapter"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "WebSocket-based function orchestration",
+    "Modular architecture with HTTP, Queue, Cron, Stream, and State modules",
+    "Multi-language SDK support (Node.js, Python, Rust)",
+    "Automatic service discovery and registration",
+    "Real-time state synchronization",
+    "Distributed cron scheduling",
+    "Redis-backed queue system",
+    "OpenTelemetry observability",
+    "Custom adapter support"
+  ],
+  "publicApiSurface": [
+    "EngineBuilder::new()",
+    "EngineBuilder::config_file_or_default()",
+    "EngineBuilder::build()",
+    "Message::RegisterFunction",
+    "Message::InvokeFunction",
+    "Message::RegisterTrigger",
+    "Message::UnregisterTrigger",
+    "QueueAdapter trait",
+    "RestApiModule",
+    "QueueModule",
+    "CronModule",
+    "StreamModule",
+    "StateModule",
+    "OtelModule"
+  ]
+}
